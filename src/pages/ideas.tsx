@@ -304,16 +304,21 @@ type FolderDeleteStep = "choose" | "confirm-all";
 
 function FolderDeleteDialog({
   folderName,
+  isVault = false,
   onClose,
   onDeleteFolderOnly,
   onDeleteWithIdeas,
 }: {
   folderName: string;
+  isVault?: boolean;
   onClose: () => void;
   onDeleteFolderOnly: () => void;
   onDeleteWithIdeas: () => void;
 }) {
   const [step, setStep] = useState<FolderDeleteStep>("choose");
+  const [confirmText, setConfirmText] = useState("");
+  const deleteConfirmed = !isVault || confirmText.trim().toLowerCase() === "delete";
+  const itemLabel = isVault ? "vault" : "folder";
 
   if (step === "confirm-all") {
     return (
@@ -328,9 +333,22 @@ function FolderDeleteDialog({
               This will permanently delete <span className="font-semibold text-foreground">"{folderName}"</span> and{" "}
               <span className="font-semibold text-destructive">ALL ideas inside it</span>. This cannot be undone.
             </p>
+            {isVault && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Type <span className="font-semibold text-foreground">delete</span> to confirm.
+                </p>
+                <Input
+                  autoFocus
+                  value={confirmText}
+                  onChange={(event) => setConfirmText(event.target.value)}
+                  placeholder="delete"
+                />
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={onClose}>Cancel</Button>
-              <Button variant="destructive" onClick={onDeleteWithIdeas}>
+              <Button variant="destructive" onClick={onDeleteWithIdeas} disabled={!deleteConfirmed}>
                 Yes, delete everything
               </Button>
             </div>
@@ -344,26 +362,41 @@ function FolderDeleteDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <Card className="w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
         <CardContent className="pt-6 space-y-4">
-          <h2 className="text-lg font-semibold">Delete folder?</h2>
+          <h2 className="text-lg font-semibold">Delete {itemLabel}?</h2>
           <p className="text-sm text-muted-foreground">
             How do you want to delete <span className="font-semibold text-foreground">"{folderName}"</span>?
           </p>
+          {isVault && (
+            <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
+              <p className="text-xs text-muted-foreground">
+                Vault deletion is protected. Type <span className="font-semibold text-foreground">delete</span> before the delete buttons unlock.
+              </p>
+              <Input
+                autoFocus
+                value={confirmText}
+                onChange={(event) => setConfirmText(event.target.value)}
+                placeholder="delete"
+              />
+            </div>
+          )}
           <div className="flex flex-col gap-2">
             <Button
               variant="destructive"
               className="justify-start"
               onClick={() => setStep("confirm-all")}
+              disabled={!deleteConfirmed}
             >
               <Trash2 className="h-4 w-4 mr-2" />
-              Delete folder AND all ideas in it
+              Delete {itemLabel} AND all ideas in it
             </Button>
             <Button
               variant="outline"
               className="justify-start text-destructive hover:text-destructive"
               onClick={onDeleteFolderOnly}
+              disabled={!deleteConfirmed}
             >
-              <Folder className="h-4 w-4 mr-2" />
-              Just delete folder (keep ideas)
+              {isVault ? <Vault className="h-4 w-4 mr-2" /> : <Folder className="h-4 w-4 mr-2" />}
+              Just delete {itemLabel} (keep ideas)
             </Button>
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
           </div>
@@ -877,6 +910,8 @@ export function Ideas() {
   const [showVaultList, setShowVaultList] = useState(false);
   const [search, setSearch] = useState("");
   const [folderToDelete, setFolderToDelete] = useState<FolderType | null>(null);
+  const isLoadingFoldersRef = useRef(false);
+  const skipNextFolderSaveRef = useRef(false);
 
   // Drag state — id of the card currently being dragged
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -921,21 +956,33 @@ export function Ideas() {
     let cancelled = false;
 
     async function loadFolders() {
-      const savedFolders = await ideaFoldersApi.getFolders();
-      if (!cancelled) {
-        setFolders(savedFolders);
-        setFoldersLoaded(true);
+      isLoadingFoldersRef.current = true;
+      try {
+        const savedFolders = await ideaFoldersApi.getFolders();
+        if (!cancelled) {
+          skipNextFolderSaveRef.current = true;
+          setFolders(savedFolders);
+          setFoldersLoaded(true);
+        }
+      } finally {
+        isLoadingFoldersRef.current = false;
       }
     }
 
     loadFolders();
+    window.addEventListener("delta-data-changed", loadFolders);
     return () => {
       cancelled = true;
+      window.removeEventListener("delta-data-changed", loadFolders);
     };
   }, []);
 
   useEffect(() => {
-    if (!foldersLoaded) return;
+    if (!foldersLoaded || isLoadingFoldersRef.current) return;
+    if (skipNextFolderSaveRef.current) {
+      skipNextFolderSaveRef.current = false;
+      return;
+    }
     ideaFoldersApi.saveFolders(folders);
   }, [folders, foldersLoaded]);
 
@@ -1197,6 +1244,10 @@ export function Ideas() {
           }}
           onRenameVault={handleRenameFolder}
           onChangeVaultColor={handleChangeColor}
+          onRequestDeleteVault={(id) => {
+            const vault = folders.find((folder) => folder.id === id);
+            if (vault) setFolderToDelete(vault);
+          }}
         />
       )}
 
@@ -1298,6 +1349,7 @@ export function Ideas() {
       {folderToDelete && (
         <FolderDeleteDialog
           folderName={folderToDelete.name}
+          isVault={!!folderToDelete.isVault}
           onClose={() => setFolderToDelete(null)}
           onDeleteFolderOnly={() => handleDeleteFolderOnly(folderToDelete.id)}
           onDeleteWithIdeas={() => handleDeleteFolderWithIdeas(folderToDelete)}

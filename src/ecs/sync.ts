@@ -4,7 +4,17 @@ import { getDB } from "./store";
 
 export type SyncOperation = {
   id?: number;
-  type: 'entity_put' | 'entity_delete' | 'comp_put' | 'comp_delete' | 'study_put' | 'study_delete' | 'tag_put' | 'tag_delete';
+  type:
+    | 'entity_put'
+    | 'entity_delete'
+    | 'comp_put'
+    | 'comp_delete'
+    | 'study_put'
+    | 'study_delete'
+    | 'tag_put'
+    | 'tag_delete'
+    | 'settings_put'
+    | 'settings_delete';
   data: any;
   timestamp: number;
 };
@@ -214,6 +224,7 @@ export const SyncSystem = {
       case 'comp_put': case 'comp_delete': collectionName = 'components'; docId = `${op.data.type}_${op.data.entityId}`; break;
       case 'study_put': case 'study_delete': collectionName = 'studyItems'; docId = op.data.id; break;
       case 'tag_put': case 'tag_delete': collectionName = 'tags'; docId = op.data.id; break;
+      case 'settings_put': case 'settings_delete': collectionName = 'settings'; docId = op.data.id; break;
     }
 
     if (!collectionName) return;

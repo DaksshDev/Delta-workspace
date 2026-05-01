@@ -1,4 +1,5 @@
 import { getDB } from "@/ecs/store";
+import { SyncSystem } from "@/ecs/sync";
 
 export type IdeaFolder = {
   id: string;
@@ -19,6 +20,8 @@ export const ideaFoldersApi = {
 
   async saveFolders(folders: IdeaFolder[]): Promise<void> {
     const db = await getDB();
-    await db.put("settings", { id: SETTINGS_ID, folders, updatedAt: new Date().toISOString() });
+    const record = { id: SETTINGS_ID, folders, updatedAt: new Date().toISOString() };
+    await db.put("settings", record);
+    await SyncSystem.queueWrite({ type: "settings_put", data: record });
   },
 };

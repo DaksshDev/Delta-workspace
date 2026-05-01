@@ -14,6 +14,7 @@ import {
   MoreVertical,
   ArrowLeft,
   X,
+  Trash2,
 } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { Input } from "@/components/ui/input";
@@ -110,11 +111,13 @@ export function VaultGrid({
   onOpenVault,
   onRenameVault,
   onChangeVaultColor,
+  onRequestDeleteVault,
 }: {
   vaults: IdeaFolder[];
   onOpenVault: (id: string) => void;
   onRenameVault: (id: string, name: string) => void;
   onChangeVaultColor: (id: string, color: string) => void;
+  onRequestDeleteVault: (id: string) => void;
 }) {
   const [colorPickerOpenId, setColorPickerOpenId] = useState<string | null>(null);
   const [tempColor, setTempColor] = useState("#6366f1");
@@ -172,6 +175,12 @@ export function VaultGrid({
                     }}
                   >
                     <Palette className="h-3 w-3" /> Color
+                  </button>
+                  <button
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-muted rounded-sm"
+                    onClick={() => onRequestDeleteVault(vault.id)}
+                  >
+                    <Trash2 className="h-3 w-3" /> Delete
                   </button>
                 </PopoverContent>
               </Popover>
