@@ -74,67 +74,65 @@ function AppRoutes() {
 
 function AppContent() {
   const { user, loading, login, logout } = useAuth();
-  const [seeded, setSeeded] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [initializedFor, setInitializedFor] = useState<string | null>(null);
   const [showWelcomeBackModal, setShowWelcomeBackModal] = useState(false);
   const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
-  const [hasCloudWorkspace, setHasCloudWorkspace] = useState(false);
 
-  // Seed database
+  // Initialize the local workspace. Signed-in users sync first so cloud data is
+  // not mistaken for an empty/default local workspace.
   useEffect(() => {
     let mounted = true;
-    async function initSeed() {
-      if (seeded || loading) return;
+    const workspaceKey = user?.uid ?? "anonymous";
+
+    async function initWorkspace() {
+      if (loading || initializedFor === workspaceKey) return;
+
+      setWorkspaceReady(false);
       try {
-        await SeedSystem.seedIfEmpty();
-      } catch (error) {
-        console.error("App: Fatal initialization error", error);
-      } finally {
-        if (mounted) setSeeded(true);
-      }
-    }
-    initSeed();
-    return () => { mounted = false; };
-  }, [loading, seeded]);
+        if (!user) {
+          if (mounted) {
+            setInitializedFor(workspaceKey);
+            setWorkspaceReady(true);
+          }
+          return;
+        }
 
-  // Sync cloud workspace
-  useEffect(() => {
-    let mounted = true;
-    
-    if (!loading && user && seeded) {
-      const runSync = async () => {
-        if (SyncSystem.isInitialized && SyncSystem.uid === user.uid) return;
-        
-        setIsSyncingWorkspace(true);
-        const startTime = Date.now();
-        try {
+        if (!(SyncSystem.isInitialized && SyncSystem.uid === user.uid)) {
+          setIsSyncingWorkspace(true);
+          const startTime = Date.now();
           const result = await SyncSystem.init(user.uid);
           const timeTaken = ((Date.now() - startTime) / 1000).toFixed(1);
-          
-          if (mounted && result) {
-            if (result.action === 'pulled') {
-              setHasCloudWorkspace(true);
-              setShowWelcomeBackModal(true);
-              toast.success(`Successfully pulled ${result.items} items from cloud in ${timeTaken}s`);
-            } else if (result.action === 'pushed') {
-              toast.success(`Successfully initialized cloud workspace in ${timeTaken}s`);
-            }
-          }
-        } catch (err) {
-          if (mounted) {
-            toast.error("Failed to sync workspace. Please sign in again.");
-            await logout();
-          }
-        } finally {
-          if (mounted) setIsSyncingWorkspace(false);
-        }
-      };
-      runSync();
-    }
-    
-    return () => { mounted = false; };
-  }, [user, loading, seeded, logout]);
 
-  if (loading || !seeded || isSyncingWorkspace) {
+          if (mounted && result.action === 'pulled') {
+            setShowWelcomeBackModal(true);
+            toast.success(`Successfully pulled ${result.items} items from cloud in ${timeTaken}s`);
+          } else if (mounted && result.action === 'pushed') {
+            toast.success(`Cloud sync started in ${timeTaken}s`);
+          }
+        }
+
+        await SeedSystem.seedIfEmpty();
+        if (mounted) {
+          setInitializedFor(workspaceKey);
+          setWorkspaceReady(true);
+        }
+      } catch (error) {
+        console.error("App: Fatal initialization error", error);
+        if (mounted) {
+          toast.error("Failed to load workspace. Please sign in again.");
+          await logout();
+        }
+      } finally {
+        if (mounted) setIsSyncingWorkspace(false);
+      }
+    }
+    initWorkspace();
+
+    return () => { mounted = false; };
+  }, [user, loading, initializedFor, logout]);
+
+  if (loading || !workspaceReady || isSyncingWorkspace) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background">
         <div className="h-10 w-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />

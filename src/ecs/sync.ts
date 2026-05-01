@@ -57,11 +57,21 @@ function getDocId(config: SyncCollectionConfig, item: any) {
   return typeof config.idField === 'function' ? config.idField(item) : item[config.idField];
 }
 
+async function getLocalItemCount() {
+  const idb = await getDB();
+  const counts = await Promise.all(
+    SYNC_COLLECTIONS.map((config) => idb.count(config.idbName as any))
+  );
+  return counts.reduce((total, count) => total + count, 0);
+}
+
 export const SyncSystem = {
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   uid: null as string | null,
   isInitialized: false,
   isInitializing: false,
+  isProcessingQueue: false,
+  hasNetworkListeners: false,
   unsubscribes: [] as (() => void)[],
   
   async init(uid: string): Promise<{ action: 'pulled' | 'pushed' | 'none', items?: number }> {
@@ -70,60 +80,58 @@ export const SyncSystem = {
     this.uid = uid;
     
     // Listen for network changes
-    window.addEventListener('online', async () => {
-      this.isOnline = true;
-      try {
-        console.log("Sync: Back online, setting up listeners...");
-        this.setupRealtimeListeners();
-      } catch (err) {
-        console.warn("Sync: Failed to setup listeners upon coming online", err);
-      }
-      this.processQueue();
-    });
-    window.addEventListener('offline', () => {
-      this.isOnline = false;
-    });
+    if (!this.hasNetworkListeners) {
+      window.addEventListener('online', async () => {
+        this.isOnline = true;
+        try {
+          console.log("Sync: Back online, setting up listeners...");
+          this.setupRealtimeListeners();
+        } catch (err) {
+          console.warn("Sync: Failed to setup listeners upon coming online", err);
+        }
+        this.processQueue();
+      });
+      window.addEventListener('offline', () => {
+        this.isOnline = false;
+      });
+      this.hasNetworkListeners = true;
+    }
 
     let result: { action: 'pulled' | 'pushed' | 'none', items?: number } = { action: 'none' };
 
-    // Initial SSOT: if this device has local data, make Firebase match it first.
-    if (this.isOnline) {
-      try {
+    try {
+      if (this.isOnline) {
         const snapshot = await Promise.race([
           getDoc(doc(db, "users", this.uid)),
           new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Sync timeout")), 5000))
         ]);
 
-        const idb = await getDB();
-        const entityCount = await idb.count('entities');
-        const isLocalEmpty = entityCount === 0;
+        const isLocalEmpty = (await getLocalItemCount()) === 0;
+        const cloudHasData = snapshot.exists() && snapshot.data().hasData;
 
-        if (snapshot.exists() && snapshot.data().hasData) {
+        if (cloudHasData) {
           if (isLocalEmpty) {
             const items = await this.pullFromCloud();
             result = { action: 'pulled', items };
           } else {
-            await this.processQueue();
-            await this.pushAllToCloud();
-            result = { action: 'pushed' };
+            this.processQueue();
           }
-        } else {
-          if (!isLocalEmpty) {
-            await this.pushAllToCloud();
-            result = { action: 'pushed' };
-          }
+        } else if (!isLocalEmpty) {
+          this.pushAllToCloud();
+          result = { action: 'pushed' };
         }
-      } catch (err) {
-        console.warn("Sync: Initial sync failed or timed out", err);
-        throw err;
       }
+      
+      this.isInitialized = true;
+      
+      this.setupRealtimeListeners();
+      this.processQueue();
+    } catch (err) {
+      console.warn("Sync: Initial sync failed or timed out; continuing with local workspace", err);
+      this.isInitialized = true;
+    } finally {
+      this.isInitializing = false;
     }
-    
-    this.isInitialized = true;
-    this.isInitializing = false;
-    
-    this.setupRealtimeListeners();
-    this.processQueue();
     
     return result;
   },
@@ -217,6 +225,8 @@ export const SyncSystem = {
 
   async processQueue() {
     if (!this.uid) return;
+    if (this.isProcessingQueue) return;
+    this.isProcessingQueue = true;
     try {
       const idb = await getDB();
       const queue = await idb.getAll('syncQueue');
@@ -238,6 +248,8 @@ export const SyncSystem = {
       }
     } catch (error) {
       console.error("Sync: Critical error processing queue", error);
+    } finally {
+      this.isProcessingQueue = false;
     }
   },
 
