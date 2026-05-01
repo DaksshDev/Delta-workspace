@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTheme } from "@/components/theme-provider";
 import { getDB } from "@/ecs/store";
+import { SyncSystem } from "@/ecs/sync";
 import { toast } from "sonner";
 import { Monitor, Moon, Sun, Trash2, Database, UserIcon, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
@@ -43,15 +44,19 @@ export function Settings() {
     setIsResetting(true);
     try {
       const db = await getDB();
-      const tx = db.transaction(["entities", "components", "folders", "tags", "settings", "bugs", "syncQueue"], "readwrite");
+      const tx = db.transaction(["entities", "components", "studyItems", "folders", "tags", "bucket-tags", "idea-tags", "settings", "bugs", "syncQueue"], "readwrite");
       await tx.objectStore("entities").clear();
       await tx.objectStore("components").clear();
+      await tx.objectStore("studyItems").clear();
       await tx.objectStore("folders").clear();
       await tx.objectStore("tags").clear();
+      await tx.objectStore("bucket-tags").clear();
+      await tx.objectStore("idea-tags").clear();
       await tx.objectStore("settings").clear();
       await tx.objectStore("bugs").clear();
       await tx.objectStore("syncQueue").clear();
       await tx.done;
+      await SyncSystem.pushAllToCloud();
       
       toast.success("Workspace reset successfully. Reloading...");
       setTimeout(() => window.location.reload(), 1000);

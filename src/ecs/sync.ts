@@ -2,6 +2,13 @@ import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { getDB } from "./store";
 
+type SyncCollectionConfig = {
+  firestoreName: string;
+  idbName: string;
+  idField: string | ((item: any) => string);
+  deleteKey?: (data: any, docId: string) => any;
+};
+
 export type SyncOperation = {
   id?: number;
   type:
@@ -13,11 +20,42 @@ export type SyncOperation = {
     | 'study_delete'
     | 'tag_put'
     | 'tag_delete'
+    | 'bucket_tag_put'
+    | 'bucket_tag_delete'
+    | 'idea_tag_put'
+    | 'idea_tag_delete'
     | 'settings_put'
     | 'settings_delete';
   data: any;
   timestamp: number;
 };
+
+const SYNC_COLLECTIONS: SyncCollectionConfig[] = [
+  { firestoreName: 'entities', idbName: 'entities', idField: 'id' },
+  {
+    firestoreName: 'components',
+    idbName: 'components',
+    idField: (component: any) => `${component.type}_${component.entityId}`,
+    deleteKey: (data: any, docId: string) => {
+      const separator = docId.indexOf("_");
+      return [
+        data?.type ?? (separator >= 0 ? docId.slice(0, separator) : docId),
+        data?.entityId ?? (separator >= 0 ? docId.slice(separator + 1) : docId),
+      ];
+    },
+  },
+  { firestoreName: 'studyItems', idbName: 'studyItems', idField: 'id' },
+  { firestoreName: 'tags', idbName: 'tags', idField: 'id' },
+  { firestoreName: 'bucketTags', idbName: 'bucket-tags', idField: 'id' },
+  { firestoreName: 'ideaTags', idbName: 'idea-tags', idField: 'id' },
+  { firestoreName: 'folders', idbName: 'folders', idField: 'id' },
+  { firestoreName: 'settings', idbName: 'settings', idField: 'id' },
+  { firestoreName: 'bugs', idbName: 'bugs', idField: 'id' },
+];
+
+function getDocId(config: SyncCollectionConfig, item: any) {
+  return typeof config.idField === 'function' ? config.idField(item) : item[config.idField];
+}
 
 export const SyncSystem = {
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -48,7 +86,7 @@ export const SyncSystem = {
 
     let result: { action: 'pulled' | 'pushed' | 'none', items?: number } = { action: 'none' };
 
-    // Initial SSOT Load or Push from Firebase (non-blocking)
+    // Initial SSOT: if this device has local data, make Firebase match it first.
     if (this.isOnline) {
       try {
         const snapshot = await Promise.race([
@@ -65,7 +103,9 @@ export const SyncSystem = {
             const items = await this.pullFromCloud();
             result = { action: 'pulled', items };
           } else {
-            result = { action: 'none' };
+            await this.processQueue();
+            await this.pushAllToCloud();
+            result = { action: 'pushed' };
           }
         } else {
           if (!isLocalEmpty) {
@@ -93,24 +133,20 @@ export const SyncSystem = {
     console.log("Sync: Pushing all local data to cloud (Firestore)...");
     try {
       const idb = await getDB();
-      const collections = [
-        { name: 'entities', data: await idb.getAll('entities'), idField: 'id' },
-        { name: 'components', data: await idb.getAll('components'), idField: (c: any) => `${c.type}_${c.entityId}` },
-        { name: 'studyItems', data: await idb.getAll('studyItems'), idField: 'id' },
-        { name: 'tags', data: await idb.getAll('tags'), idField: 'id' },
-        { name: 'bucketTags', data: await idb.getAll('bucket-tags'), idField: 'id' },
-        { name: 'folders', data: await idb.getAll('folders'), idField: 'id' },
-        { name: 'ideaTags', data: await idb.getAll('idea-tags'), idField: 'id' },
-        { name: 'settings', data: await idb.getAll('settings'), idField: 'id' },
-        { name: 'bugs', data: await idb.getAll('bugs'), idField: 'id' }
-      ];
 
-      // Since Firestore batch limit is 500, we write sequentially to keep it simple and robust
-      // For large databases, we write each document
-      for (const coll of collections) {
-        for (const item of coll.data) {
-          const docId = typeof coll.idField === 'function' ? coll.idField(item) : item[coll.idField as string];
-          await setDoc(doc(db, `users/${this.uid}/${coll.name}`, docId), item);
+      for (const config of SYNC_COLLECTIONS) {
+        const localItems = await idb.getAll(config.idbName as any);
+        const localIds = new Set(localItems.map((item: any) => getDocId(config, item)));
+        const remoteSnapshot = await getDocs(collection(db, `users/${this.uid}/${config.firestoreName}`));
+
+        for (const remoteDoc of remoteSnapshot.docs) {
+          if (!localIds.has(remoteDoc.id)) {
+            await deleteDoc(doc(db, `users/${this.uid}/${config.firestoreName}`, remoteDoc.id));
+          }
+        }
+
+        for (const item of localItems) {
+          await setDoc(doc(db, `users/${this.uid}/${config.firestoreName}`, getDocId(config, item)), item);
         }
       }
 
@@ -127,15 +163,7 @@ export const SyncSystem = {
     if (!this.uid) return 0;
     try {
       const collectionNames = [
-        { firestoreName: 'entities', idbName: 'entities' },
-        { firestoreName: 'components', idbName: 'components' },
-        { firestoreName: 'studyItems', idbName: 'studyItems' },
-        { firestoreName: 'tags', idbName: 'tags' },
-        { firestoreName: 'bucketTags', idbName: 'bucket-tags' },
-        { firestoreName: 'folders', idbName: 'folders' },
-        { firestoreName: 'ideaTags', idbName: 'idea-tags' },
-        { firestoreName: 'settings', idbName: 'settings' },
-        { firestoreName: 'bugs', idbName: 'bugs' }
+        ...SYNC_COLLECTIONS,
       ];
 
       // 1. Fetch all data from Firestore (Network I/O)
@@ -224,6 +252,8 @@ export const SyncSystem = {
       case 'comp_put': case 'comp_delete': collectionName = 'components'; docId = `${op.data.type}_${op.data.entityId}`; break;
       case 'study_put': case 'study_delete': collectionName = 'studyItems'; docId = op.data.id; break;
       case 'tag_put': case 'tag_delete': collectionName = 'tags'; docId = op.data.id; break;
+      case 'bucket_tag_put': case 'bucket_tag_delete': collectionName = 'bucketTags'; docId = op.data.id; break;
+      case 'idea_tag_put': case 'idea_tag_delete': collectionName = 'ideaTags'; docId = op.data.id; break;
       case 'settings_put': case 'settings_delete': collectionName = 'settings'; docId = op.data.id; break;
     }
 
@@ -253,17 +283,7 @@ export const SyncSystem = {
     this.unsubscribes.forEach(unsub => unsub());
     this.unsubscribes = [];
 
-    const collectionNames = [
-      { firestoreName: 'entities', idbName: 'entities' },
-      { firestoreName: 'components', idbName: 'components' },
-      { firestoreName: 'studyItems', idbName: 'studyItems' },
-      { firestoreName: 'tags', idbName: 'tags' },
-      { firestoreName: 'bucketTags', idbName: 'bucket-tags' },
-      { firestoreName: 'folders', idbName: 'folders' },
-      { firestoreName: 'ideaTags', idbName: 'idea-tags' },
-      { firestoreName: 'settings', idbName: 'settings' },
-      { firestoreName: 'bugs', idbName: 'bugs' }
-    ];
+    const collectionNames = SYNC_COLLECTIONS;
 
     collectionNames.forEach(coll => {
       const q = collection(db, `users/${this.uid}/${coll.firestoreName}`);
@@ -284,7 +304,11 @@ export const SyncSystem = {
             store.put(change.doc.data() as any);
           }
           if (change.type === "removed") {
-            store.delete(change.doc.id);
+            const data = change.doc.data();
+            const deleteKey = "deleteKey" in coll && typeof coll.deleteKey === "function"
+              ? coll.deleteKey(data, change.doc.id)
+              : change.doc.id;
+            store.delete(deleteKey as any);
           }
         });
 

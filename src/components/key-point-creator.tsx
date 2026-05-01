@@ -419,7 +419,7 @@ function KeyPointPill({
       )}
 
       {/* Triple Dot Menu */}
-      <div className={`absolute right-2 top-2 flex items-center transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}>
+      <div className={`absolute right-2 top-2 flex items-center transition-opacity ${isSelected ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'}`}>
         <Popover open={menuOpen} onOpenChange={setMenuOpen}>
           <PopoverTrigger asChild>
             <button

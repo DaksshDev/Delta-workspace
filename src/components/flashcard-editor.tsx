@@ -215,7 +215,7 @@ export function FlashcardEditor({ fileId, onClose }: { fileId: string; onClose: 
               </div>
               {cards.length > 1 && selectedIndex === i && (
                 <Trash2
-                  className="h-3.5 w-3.5 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="h-3.5 w-3.5 text-destructive opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowDeleteConfirm(true);
@@ -473,4 +473,3 @@ function PopoverContent({ children, className, align }: { children: React.ReactN
     </div>
   );
 }
-

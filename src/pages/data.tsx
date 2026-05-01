@@ -8,6 +8,7 @@ import { ecsApi } from "@/ecs/api";
 import { ENTITY_TYPES } from "@/ecs/entities";
 import { getDB } from "@/ecs/store";
 import { BackupSystem } from "@/ecs/systems";
+import { SyncSystem } from "@/ecs/sync";
 import { ideaFoldersApi, type IdeaFolder } from "@/lib/idea-folders-api";
 
 type LegacyIdea = {
@@ -48,11 +49,13 @@ async function hasLegacyImportRun() {
 
 async function lockLegacyImport() {
   const db = await getDB();
-  await db.put("settings", {
+  const record = {
     id: LEGACY_IMPORT_SETTING_ID,
     imported: true,
     importedAt: new Date().toISOString(),
-  });
+  };
+  await db.put("settings", record);
+  await SyncSystem.queueWrite({ type: "settings_put", data: record });
 }
 
 export function Data() {

@@ -54,9 +54,14 @@ export function WatchLater() {
   const { data: videos, refetch } = useEcsQuery(() =>
     ecsApi.getEntitiesByType(ENTITY_TYPES.VIDEO)
   );
-  const { data: allMeta = [] } = useEcsQuery(() =>
+  const { data: allMeta = [], refetch: refetchMeta } = useEcsQuery(() =>
     ecsApi.getEntitiesWithComponent("metadata")
   );
+
+  const refreshWatchList = () => {
+    refetch();
+    refetchMeta();
+  };
 
   const [newUrl, setNewUrl] = useState("");
   const [adding, setAdding] = useState(false);
@@ -84,7 +89,7 @@ export function WatchLater() {
         origin: { y: 0.6 }
       });
       await ecsApi.deleteEntity(pendingWatchId);
-      refetch();
+      refreshWatchList();
     }
     
     localStorage.removeItem("pendingWatchId");
@@ -160,7 +165,7 @@ export function WatchLater() {
     await ecsApi.setComponent(entity.id, "status", { status: "unwatched" });
     setNewUrl("");
     setAdding(false);
-    refetch();
+    refreshWatchList();
   };
 
   const isEmpty = (videos?.length ?? 0) === 0;
@@ -208,7 +213,7 @@ export function WatchLater() {
 
       {/* ── Shorts Section ─────────────────────────────────────────────── */}
       {shorts.length > 0 && (
-        <ShortsSection shorts={shorts} refetch={refetch} />
+        <ShortsSection shorts={shorts} refetch={refreshWatchList} />
       )}
 
       {/* ── Long-form Section ───────────────────────────────────────────── */}
@@ -224,7 +229,7 @@ export function WatchLater() {
           )}
           <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {longForm.map((video) => (
-              <VideoCard key={video.id} videoId={video.id} refetchList={refetch} />
+              <VideoCard key={video.id} videoId={video.id} refetchList={refreshWatchList} />
             ))}
           </div>
         </div>
@@ -244,10 +249,10 @@ export function WatchLater() {
           <div className="flex justify-center py-4 pointer-events-none">
             {pendingWatchId && (
               shorts.find((s) => s.id === pendingWatchId) ? (
-                <ShortCard videoId={pendingWatchId} refetchList={refetch} previewOnly />
+                <ShortCard videoId={pendingWatchId} refetchList={refreshWatchList} previewOnly />
               ) : longForm.find((l) => l.id === pendingWatchId) ? (
                 <div className="w-full max-w-sm">
-                  <VideoCard videoId={pendingWatchId} refetchList={refetch} previewOnly />
+                  <VideoCard videoId={pendingWatchId} refetchList={refreshWatchList} previewOnly />
                 </div>
               ) : null
             )}

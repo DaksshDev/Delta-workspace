@@ -330,6 +330,7 @@ function TodoItem({
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [showSubtaskInput, setShowSubtaskInput] = useState(false);
   const [expanded, setExpanded] = useState(true);
+  const [activeTagId, setActiveTagId] = useState<string | null>(null);
   const progress = useMemo(() => calculateNodeProgress(node), [node]);
   const subtaskCount = useMemo(() => countDescendants(node), [node]);
   const showProgress = node.children.length > 0;
@@ -390,6 +391,7 @@ function TodoItem({
       ? node.tags.filter((id) => id !== tagId)
       : [...node.tags, tagId];
     await ecsApi.setComponent(node.entity.id, "tag", { tags });
+    setActiveTagId(null);
     onRefresh();
   };
 
@@ -496,7 +498,8 @@ function TodoItem({
                     type="button"
                     key={tag.id}
                     className={cn(
-                      "group/tag inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[10px] font-bold transition-all hover:pr-1 focus:pr-1 active:pr-1",
+                      "group/tag inline-flex h-6 items-center gap-1 overflow-hidden rounded-full border px-2 text-[10px] font-bold transition-all hover:pr-1 focus:pr-1 active:pr-1",
+                      activeTagId === tag.id && "pr-1",
                       tag.isSpecial && "shadow-lg"
                     )}
                     style={{
@@ -505,10 +508,17 @@ function TodoItem({
                       color: getContrastColor(tag.color),
                       boxShadow: tag.isSpecial ? `0 0 12px ${tag.color}80` : undefined,
                     }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setActiveTagId((current) => current === tag.id ? null : tag.id);
+                    }}
                   >
                     <span>{tag.name}</span>
                     <span
-                      className="grid h-4 w-4 place-items-center rounded-full bg-black/25 opacity-0 transition-opacity group-hover/tag:opacity-100 group-focus/tag:opacity-100 group-active/tag:opacity-100"
+                      className={cn(
+                        "grid h-4 w-4 max-w-0 place-items-center overflow-hidden rounded-full bg-black/25 opacity-0 transition-all group-hover/tag:max-w-4 group-hover/tag:opacity-100 group-focus/tag:max-w-4 group-focus/tag:opacity-100",
+                        activeTagId === tag.id && "max-w-4 opacity-100"
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
                         toggleTag(tag.id);

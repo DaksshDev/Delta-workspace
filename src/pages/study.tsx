@@ -289,13 +289,13 @@ function FolderRow({
       <ItemIcon type={item.type} color={item.color} className="h-5 w-5 shrink-0 ml-2" />
       <span className="text-sm font-medium flex-1 min-w-0 truncate">{item.name}</span>
       {item.type === "folder" && (
-        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100" />
       )}
       <div className="relative" onClick={(e) => e.stopPropagation()}>
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-6 w-6 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
           onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
         >
           <MoreVertical className="h-3.5 w-3.5" />

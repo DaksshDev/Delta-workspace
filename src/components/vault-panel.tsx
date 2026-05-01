@@ -153,7 +153,7 @@ export function VaultGrid({
               </div>
             </button>
 
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100">
+            <div className="absolute top-2 right-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
               <Popover>
                 <PopoverTrigger asChild>
                   <Button size="icon" variant="ghost" className="h-6 w-6">

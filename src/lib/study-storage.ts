@@ -1,5 +1,6 @@
 import { ENTITY_TYPES } from "@/ecs/entities";
 import { getDB, type DeltaDB } from "@/ecs/store";
+import { SyncSystem } from "@/ecs/sync";
 
 export type StudyItemType = "folder" | "flashcard" | "quiz" | "keypoints";
 
@@ -86,10 +87,20 @@ async function putEntityAndComponents(item: StudyItem) {
     createdAt: entity?.createdAt ?? now,
     updatedAt: now,
   });
+  await SyncSystem.queueWrite({
+    type: "entity_put",
+    data: {
+      id: item.id,
+      type: entityTypeForStudyItem(item.type),
+      createdAt: entity?.createdAt ?? now,
+      updatedAt: now,
+    },
+  });
 
-  await db.put("components", { entityId: item.id, type: "title", data: { title: item.name } });
-  await db.put("components", { entityId: item.id, type: "color", data: { color: item.color } });
-  await db.put("components", {
+  const components = [
+    { entityId: item.id, type: "title", data: { title: item.name } },
+    { entityId: item.id, type: "color", data: { color: item.color } },
+    {
     entityId: item.id,
     type: "metadata",
     data: {
@@ -100,16 +111,22 @@ async function putEntityAndComponents(item: StudyItem) {
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
     },
-  });
-  await db.put("components", {
-    entityId: item.id,
-    type: "relation",
-    data: {
-      relations: item.parentId === STUDY_ROOT_ID
-        ? []
-        : [{ type: "parent-folder", targetId: item.parentId }],
     },
-  });
+    {
+      entityId: item.id,
+      type: "relation",
+      data: {
+        relations: item.parentId === STUDY_ROOT_ID
+          ? []
+          : [{ type: "parent-folder", targetId: item.parentId }],
+      },
+    },
+  ];
+
+  for (const component of components) {
+    await db.put("components", component);
+    await SyncSystem.queueWrite({ type: "comp_put", data: component });
+  }
 }
 
 async function upsertSeedItems(seed: SeedItem[], parentId: string) {
@@ -130,6 +147,7 @@ async function upsertSeedItems(seed: SeedItem[], parentId: string) {
         updatedAt: now,
       };
       await db.put("studyItems", item);
+      await SyncSystem.queueWrite({ type: "study_put", data: item });
       await putEntityAndComponents(item);
     }
     await upsertSeedItems(seedItem.children, seedItem.id);
@@ -201,6 +219,7 @@ export const studyStorage = {
     };
 
     await db.put("studyItems", item);
+    await SyncSystem.queueWrite({ type: "study_put", data: item });
     await putEntityAndComponents(item);
     return item;
   },
@@ -211,6 +230,7 @@ export const studyStorage = {
     if (!item) return;
     const updated = { ...item, name, updatedAt: new Date().toISOString() };
     await db.put("studyItems", updated);
+    await SyncSystem.queueWrite({ type: "study_put", data: updated });
     await putEntityAndComponents(updated);
   },
 
@@ -220,6 +240,7 @@ export const studyStorage = {
     if (!item) return;
     const updated = { ...item, color, updatedAt: new Date().toISOString() };
     await db.put("studyItems", updated);
+    await SyncSystem.queueWrite({ type: "study_put", data: updated });
     await putEntityAndComponents(updated);
   },
 
@@ -238,6 +259,11 @@ export const studyStorage = {
       await tx.objectStore("components").delete([component.type, component.entityId]);
     }
     await tx.done;
+    await SyncSystem.queueWrite({ type: "study_delete", data: { id } });
+    for (const component of components) {
+      await SyncSystem.queueWrite({ type: "comp_delete", data: { type: component.type, entityId: component.entityId } });
+    }
+    await SyncSystem.queueWrite({ type: "entity_delete", data: { id } });
   },
 
   async resetDefaultColors() {
@@ -248,6 +274,7 @@ export const studyStorage = {
       if (item) {
         const updated = { ...item, color: seed.color, updatedAt: new Date().toISOString() };
         await db.put("studyItems", updated);
+        await SyncSystem.queueWrite({ type: "study_put", data: updated });
         await putEntityAndComponents(updated);
       }
     }
@@ -261,6 +288,7 @@ export const studyStorage = {
       if (item) {
         const updated = { ...item, name: seed.name, updatedAt: new Date().toISOString() };
         await db.put("studyItems", updated);
+        await SyncSystem.queueWrite({ type: "study_put", data: updated });
         await putEntityAndComponents(updated);
       }
     }

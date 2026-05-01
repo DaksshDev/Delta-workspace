@@ -76,7 +76,7 @@ function NameCard({ nameId, onDelete }: { nameId: string, onDelete: () => void }
   return (
     <Card className="group flex items-center justify-between p-4">
       <span className="font-medium">{titleComp?.data?.title}</span>
-      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 text-destructive" onClick={onDelete}>
+      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-100 text-destructive sm:opacity-0 sm:group-hover:opacity-100" onClick={onDelete}>
         <Trash2 className="h-4 w-4" />
       </Button>
     </Card>
