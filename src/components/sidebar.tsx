@@ -5,33 +5,40 @@ import {
   LayoutDashboard,
   Lightbulb,
   BookOpen,
-  Youtube,
   FileText,
-  PenTool,
+  BellRing,
   CheckSquare,
   ListTodo,
   Timer,
   Bug,
   Download,
   Save,
+  Database,
   Settings,
+  Calculator,
+  Cloud,
+  ChartNoAxesCombined,
 } from "lucide-react";
+import { FaYoutube } from "react-icons/fa";
 
 const studyLinks = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/todos", label: "Todos", icon: ListTodo },
-  { href: "/study", label: "Study Manager", icon: BookOpen },
-  { href: "/exams", label: "Exam Directory", icon: FileText },
+  { href: "/study", label: "Study Vault", icon: BookOpen },
+  { href: "/progress", label: "Progress", icon: ChartNoAxesCombined },
+  { href: "/basic-maths", label: "Basic Maths", icon: Calculator },
+  { href: "/exams", label: "Board Exam Directory", icon: FileText },
   { href: "/ideas", label: "Idea Dump", icon: Lightbulb },
-  { href: "/watch", label: "Watch Later", icon: Youtube },
-  { href: "/names", label: "Name/Logo Ideas", icon: PenTool },
+  { href: "/watch", label: "Watch Later", icon: FaYoutube },
+  { href: "/reminders", label: "Reminders", icon: BellRing },
   { href: "/bucket", label: "Bucket List", icon: CheckSquare },
   { href: "/timer", label: "Timer", icon: Timer },
 ];
 
 const devLinks = [
   { href: "/dev/bugs", label: "Bugs", icon: Bug },
-  { href: "/dev/export", label: "Export", icon: Download },
+  { href: "/dev/data", label: "Data", icon: Database },
+  { href: "/dev/sync", label: "Cloud Sync", icon: Cloud },
   { href: "/dev/backups", label: "Backups", icon: Save },
   { href: "/dev/settings", label: "Settings", icon: Settings },
 ];
@@ -45,9 +52,11 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col">
       <div className="flex h-14 shrink-0 items-center px-4">
         <div className="flex items-center gap-2 font-semibold tracking-tight text-sidebar-foreground">
-          <svg viewBox="0 0 24 24" className="w-5 h-5 fill-foreground">
-            <path d="M12 2L2 22h20L12 2zm0 4.5l6.5 13h-13L12 6.5z" />
-          </svg>
+          <img
+            src="/delta-board-logo.png"
+            alt=""
+            className="h-8 w-8 rounded-sm object-contain"
+          />
           <span className="text-foreground">Delta Board</span>
         </div>
       </div>
@@ -82,7 +91,7 @@ export function Sidebar() {
   if (!sidebarOpen) return null;
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar rounded-tr-2xl rounded-br-2xl h-screen overflow-hidden">
+    <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar rounded-tr-2xl rounded-br-2xl h-screen overflow-hidden">
       <SidebarContent />
     </aside>
   );

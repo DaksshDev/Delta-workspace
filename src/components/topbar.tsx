@@ -5,13 +5,38 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Switch } from "./ui/switch";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
 import { SidebarContent } from "./sidebar";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { VscLayoutSidebarLeft } from "react-icons/vsc";
+import { useAuth } from "@/lib/auth-context";
+import { SyncSystem } from "@/ecs/sync";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "./ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { LogOut, User as UserIcon, Settings as SettingsIcon, Cloud, CloudOff, RefreshCw } from "lucide-react";
 
 export function TopBar() {
   const { mode, setMode, sidebarOpen, setSidebarOpen } = useAppStore();
+  const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [syncState, setSyncState] = useState<{ queue: number, online: boolean }>({ queue: 0, online: true });
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const updateSync = async () => {
+      const q = await SyncSystem.getQueueCount();
+      setSyncState({ queue: q, online: SyncSystem.isOnline });
+    };
+    updateSync();
+    const interval = setInterval(updateSync, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCommandPalette = () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
@@ -45,13 +70,13 @@ export function TopBar() {
         className="hidden md:inline-flex h-8 w-8"
         onClick={() => setSidebarOpen(!sidebarOpen)}
       >
-        <Menu className="h-4 w-4" />
+        <VscLayoutSidebarLeft className="w-6 h-6" />
         <span className="sr-only">Toggle Sidebar</span>
       </Button>
 
-      {/* Study / Dev toggle (proper shadcn Switch) */}
+      {/* Study / Dev toggle */}
       <div className="flex items-center space-x-2">
-        <span 
+        <span
           className={`text-sm cursor-pointer select-none transition-colors ${mode === "study" ? "font-medium" : "text-muted-foreground hover:text-foreground"}`}
           onClick={() => handleModeChange(false)}
         >
@@ -61,7 +86,7 @@ export function TopBar() {
           checked={mode === "dev"}
           onCheckedChange={handleModeChange}
         />
-        <span 
+        <span
           className={`text-sm cursor-pointer select-none transition-colors ${mode === "dev" ? "font-medium" : "text-muted-foreground hover:text-foreground"}`}
           onClick={() => handleModeChange(true)}
         >
@@ -84,14 +109,68 @@ export function TopBar() {
           </kbd>
         </Button>
 
-        <Button variant="default" size="icon" className="h-8 w-8 rounded-full shrink-0">
-          <Plus className="h-4 w-4" />
-          <span className="sr-only">New</span>
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+                onClick={() => navigate("/dev/sync")}
+              >
+                {!syncState.online ? (
+                  <CloudOff className="h-4 w-4 text-destructive" />
+                ) : syncState.queue > 0 ? (
+                  <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
+                ) : (
+                  <Cloud className="h-4 w-4 text-green-500" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>
+                {!syncState.online
+                  ? "Offline - Changes saved locally"
+                  : syncState.queue > 0
+                    ? `Syncing ${syncState.queue} items...`
+                    : "Cloud synced"}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
-        <Avatar className="h-8 w-8 hidden sm:flex">
-          <AvatarFallback className="text-xs bg-muted text-foreground">DB</AvatarFallback>
-        </Avatar>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="relative h-8 w-8 rounded-full p-0">
+              <Avatar className="h-8 w-8">
+                {user?.photoURL && <img src={user.photoURL} alt={user.displayName || ""} />}
+                <AvatarFallback className="text-xs bg-muted text-foreground">
+                  {(user?.displayName || "DB").slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56" align="end" forceMount>
+            <DropdownMenuLabel className="font-normal">
+              <div className="flex flex-col space-y-1">
+                <p className="text-sm font-medium leading-none">{user?.displayName}</p>
+                <p className="text-xs leading-none text-muted-foreground">
+                  {user?.email}
+                </p>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate("/dev/settings")}>
+              <SettingsIcon className="mr-2 h-4 w-4" />
+              <span>Settings</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive">
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Log out</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

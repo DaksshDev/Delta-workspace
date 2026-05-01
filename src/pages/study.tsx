@@ -1,164 +1,51 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FaFolder } from "react-icons/fa";
 import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
   Folder,
   FolderOpen,
-  ChevronRight,
+  HelpCircle,
   Home,
-  Plus,
+  Layers,
   MoreVertical,
-  Pencil,
   Palette,
-  Trash2,
-  X,
+  Pencil,
+  Plus,
+  RotateCcw,
   Search,
   Settings,
-  RotateCcw,
+  Trash2,
+  X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import { HexColorPicker } from "react-colorful";
+import { FlashcardEditor } from "@/components/flashcard-editor";
+import { KeyPointCreator } from "@/components/key-point-creator";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DEFAULT_STUDY_IDS,
+  STUDY_ROOT_ID,
+  studyStorage,
+  type StudyItem,
+  type StudyItemType,
+} from "@/lib/study-storage";
+import { toast } from "sonner";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+function ItemIcon({ type, color, className }: { type: StudyItemType; color: string; className?: string }) {
+  switch (type) {
+    case "flashcard":
+      return <Layers className={className} style={{ color }} />;
 
-type FolderNode = {
-  id: string;
-  name: string;
-  color: string;
-  children: FolderNode[];
-  createdAt?: string; // <-- Added creation date
-};
-
-// ─── Default folder IDs (cannot be deleted) ───────────────────────────────────
-
-const DEFAULT_IDS = new Set([
-  "science", "maths", "sst", "english", "hindi", "it",
-  "physics", "chemistry", "bio",
-  "history", "geography", "civics", "economics",
-]);
-
-// ─── Seed Data (source of truth for reset) ────────────────────────────────────
-
-const SEED_DEFAULTS: FolderNode[] = [
-  {
-    id: "science",
-    name: "Science",
-    color: "#22c55e",
-    children: [
-      { id: "physics", name: "Physics", color: "#3b82f6", children: [] },
-      { id: "chemistry", name: "Chemistry", color: "#f97316", children: [] },
-      { id: "bio", name: "Biology", color: "#22c55e", children: [] },
-    ],
-  },
-  { id: "maths", name: "Maths", color: "#ef4444", children: [] },
-  {
-    id: "sst",
-    name: "SST",
-    color: "#f97316",
-    children: [
-      { id: "history", name: "History", color: "#b45309", children: [] },
-      { id: "geography", name: "Geography", color: "#0d9488", children: [] },
-      { id: "civics", name: "Civics", color: "#eab308", children: [] },
-      { id: "economics", name: "Economics", color: "#22c55e", children: [] },
-    ],
-  },
-  { id: "english", name: "English", color: "#3b82f6", children: [] },
-  { id: "hindi", name: "Hindi", color: "#8b5cf6", children: [] },
-  { id: "it", name: "IT", color: "#6b7280", children: [] },
-];
-
-// Deep clone seed preserving any user children inside default folders
-function cloneSeed(seed: FolderNode[]): FolderNode[] {
-  return seed.map((n) => ({ ...n, children: cloneSeed(n.children) }));
-}
-
-function generateId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-// ─── Deep helpers ─────────────────────────────────────────────────────────────
-
-function findNode(nodes: FolderNode[], id: string): FolderNode | null {
-  for (const n of nodes) {
-    if (n.id === id) return n;
-    const found = findNode(n.children, id);
-    if (found) return found;
+    case "keypoints":
+      return <FileText className={className} style={{ color }} />;
+    default:
+      return <FaFolder className={className} style={{ color }} />;
   }
-  return null;
 }
-
-function updateNode(
-  nodes: FolderNode[],
-  id: string,
-  updater: (n: FolderNode) => FolderNode
-): FolderNode[] {
-  return nodes.map((n) => {
-    if (n.id === id) return updater(n);
-    return { ...n, children: updateNode(n.children, id, updater) };
-  });
-}
-
-function deleteNode(nodes: FolderNode[], id: string): FolderNode[] {
-  return nodes
-    .filter((n) => n.id !== id)
-    .map((n) => ({ ...n, children: deleteNode(n.children, id) }));
-}
-
-function buildPath(nodes: FolderNode[], targetId: string): FolderNode[] {
-  for (const n of nodes) {
-    if (n.id === targetId) return [n];
-    const sub = buildPath(n.children, targetId);
-    if (sub.length > 0) return [n, ...sub];
-  }
-  return [];
-}
-
-function flatSearch(nodes: FolderNode[], query: string): FolderNode[] {
-  const q = query.toLowerCase();
-  const results: FolderNode[] = [];
-  function walk(list: FolderNode[]) {
-    for (const n of list) {
-      if (n.name.toLowerCase().includes(q)) results.push(n);
-      walk(n.children);
-    }
-  }
-  walk(nodes);
-  return results;
-}
-
-// Reset only colors of default folders, preserve user-created children & custom children
-function resetColorsOnly(tree: FolderNode[]): FolderNode[] {
-  return tree.map((n) => {
-    const seedMatch = findNode(SEED_DEFAULTS, n.id);
-    const newColor = seedMatch ? seedMatch.color : n.color;
-    return {
-      ...n,
-      color: newColor,
-      children: resetColorsOnly(n.children),
-    };
-  });
-}
-
-// Reset only names of default folders
-function resetNamesOnly(tree: FolderNode[]): FolderNode[] {
-  return tree.map((n) => {
-    const seedMatch = findNode(SEED_DEFAULTS, n.id);
-    const newName = seedMatch ? seedMatch.name : n.name;
-    return {
-      ...n,
-      name: newName,
-      children: resetNamesOnly(n.children),
-    };
-  });
-}
-
-// Helper to count total nested items
-function countTotalItems(node: FolderNode): number {
-  return node.children.length + node.children.reduce((acc, child) => acc + countTotalItems(child), 0);
-}
-
-// ─── Color Picker Modal ───────────────────────────────────────────────────────
 
 function ColorPickerModal({
   color,
@@ -175,6 +62,7 @@ function ColorPickerModal({
     "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6",
     "#0d9488", "#b45309", "#6b7280", "#ffffff",
   ];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
       <Card className="shadow-xl w-auto">
@@ -193,6 +81,7 @@ function ColorPickerModal({
                 className="h-5 w-5 rounded-full border-2 border-transparent hover:scale-110 transition-transform"
                 style={{ background: c }}
                 onClick={() => setLocal(c)}
+                aria-label={`Use ${c}`}
               />
             ))}
           </div>
@@ -209,8 +98,6 @@ function ColorPickerModal({
   );
 }
 
-// ─── Name Dialog ──────────────────────────────────────────────────────────────
-
 function NameDialog({
   title,
   initial,
@@ -223,6 +110,7 @@ function NameDialog({
   onClose: () => void;
 }) {
   const [name, setName] = useState(initial ?? "");
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
       <Card className="w-full max-w-sm shadow-xl">
@@ -230,7 +118,7 @@ function NameDialog({
           <h2 className="text-lg font-semibold">{title}</h2>
           <Input
             autoFocus
-            placeholder="Folder name..."
+            placeholder="Name..."
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
@@ -249,8 +137,6 @@ function NameDialog({
     </div>
   );
 }
-
-// ─── Settings Modal ───────────────────────────────────────────────────────────
 
 function SettingsModal({
   onResetColors,
@@ -271,11 +157,9 @@ function SettingsModal({
               <X className="h-4 w-4" />
             </Button>
           </div>
-
           <p className="text-xs text-muted-foreground">
             Reset options only affect default subject folders. Your added folders and any content inside folders are never touched.
           </p>
-
           <div className="space-y-2">
             <button
               className="flex items-center gap-3 w-full px-4 py-3 rounded-lg border hover:bg-muted/40 transition-colors text-left group"
@@ -290,7 +174,6 @@ function SettingsModal({
               </div>
               <RotateCcw className="h-3.5 w-3.5 text-muted-foreground ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
             </button>
-
             <button
               className="flex items-center gap-3 w-full px-4 py-3 rounded-lg border hover:bg-muted/40 transition-colors text-left group"
               onClick={() => { onResetNames(); onClose(); }}
@@ -311,16 +194,16 @@ function SettingsModal({
   );
 }
 
-// ─── Context Menu ─────────────────────────────────────────────────────────────
-
 function FolderContextMenu({
   isDefault,
+  itemType,
   onRename,
   onChangeColor,
   onDelete,
   onClose,
 }: {
   isDefault: boolean;
+  itemType: StudyItemType;
   onRename: () => void;
   onChangeColor: () => void;
   onDelete: () => void;
@@ -344,7 +227,6 @@ function FolderContextMenu({
           <Palette className="h-3.5 w-3.5 text-muted-foreground" />
           Change colour
         </button>
-        {/* Delete only shown for user-created folders */}
         {!isDefault && (
           <>
             <div className="my-1 border-t" />
@@ -353,7 +235,7 @@ function FolderContextMenu({
               onClick={(e) => { e.stopPropagation(); onDelete(); onClose(); }}
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Delete folder
+              Delete {itemType === "folder" ? "folder" : "item"}
             </button>
           </>
         )}
@@ -362,10 +244,8 @@ function FolderContextMenu({
   );
 }
 
-// ─── Folder Row ───────────────────────────────────────────────────────────────
-
 function FolderRow({
-  node,
+  item,
   onOpen,
   onRename,
   onChangeColor,
@@ -375,7 +255,7 @@ function FolderRow({
   isSelected,
   onSelect,
 }: {
-  node: FolderNode;
+  item: StudyItem;
   onOpen: () => void;
   onRename: () => void;
   onChangeColor: () => void;
@@ -386,11 +266,9 @@ function FolderRow({
   onSelect: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const isDefault = DEFAULT_IDS.has(node.id);
+  const isDefault = DEFAULT_STUDY_IDS.has(item.id);
 
   const handleClick = () => {
-    // On touch: first tap selects (updates status bar), second tap on same folder opens it.
-    // On desktop: hover already marks this folder as selected, so first click opens directly.
     if (isSelected) {
       onOpen();
     } else {
@@ -403,19 +281,16 @@ function FolderRow({
       className={`group flex items-center gap-3 px-4 py-3 rounded-lg border hover:bg-muted/30 cursor-pointer transition-all select-none relative ${
         isSelected ? "bg-muted/20 ring-1 ring-inset" : ""
       }`}
-      style={{
-        borderColor: `${node.color}44`,
-        ...(isSelected ? { ringColor: node.color } : {}),
-      }}
+      style={{ borderColor: `${item.color}44`, ...(isSelected ? { ringColor: item.color } : {}) }}
       onClick={handleClick}
       onMouseEnter={onHoverEnter}
       onMouseLeave={onHoverLeave}
     >
-      <FaFolder className="h-5 w-5 shrink-0 ml-2" style={{ color: node.color }} />
-      <span className="text-sm font-medium flex-1">{node.name}</span>
-      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-
-      {/* 3-dot menu */}
+      <ItemIcon type={item.type} color={item.color} className="h-5 w-5 shrink-0 ml-2" />
+      <span className="text-sm font-medium flex-1 min-w-0 truncate">{item.name}</span>
+      {item.type === "folder" && (
+        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+      )}
       <div className="relative" onClick={(e) => e.stopPropagation()}>
         <Button
           variant="ghost"
@@ -428,6 +303,7 @@ function FolderRow({
         {menuOpen && (
           <FolderContextMenu
             isDefault={isDefault}
+            itemType={item.type}
             onRename={onRename}
             onChangeColor={onChangeColor}
             onDelete={onDelete}
@@ -439,110 +315,143 @@ function FolderRow({
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
 export function StudyManager() {
-  const [tree, setTree] = useState<FolderNode[]>(cloneSeed(SEED_DEFAULTS));
+  const [items, setItems] = useState<StudyItem[]>([]);
+  const [breadcrumb, setBreadcrumb] = useState<StudyItem[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<StudyItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
 
-  // Hover tracking (desktop) + tap tracking (mobile) for bottom bar
-  const [hoveredFolder, setHoveredFolder] = useState<FolderNode | null>(null);
-  const [tappedFolder, setTappedFolder] = useState<FolderNode | null>(null);
-
-  // What's shown in the status bar: hover takes priority on desktop; tap used on mobile
+  const [hoveredFolder, setHoveredFolder] = useState<StudyItem | null>(null);
+  const [tappedFolder, setTappedFolder] = useState<StudyItem | null>(null);
+  const [statusCount, setStatusCount] = useState<number | null>(null);
   const statusFolder = hoveredFolder ?? tappedFolder;
 
-  // Modal states
-  const [creating, setCreating] = useState(false);
-  const [renaming, setRenaming] = useState<FolderNode | null>(null);
-  const [colorTarget, setColorTarget] = useState<FolderNode | null>(null);
+  const [creating, setCreating] = useState<StudyItemType | null>(null);
+  const [renaming, setRenaming] = useState<StudyItem | null>(null);
+  const [colorTarget, setColorTarget] = useState<StudyItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StudyItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openedFile, setOpenedFile] = useState<StudyItem | null>(null);
 
-  // Derive current view
-  const currentChildren: FolderNode[] = useMemo(() => {
-    if (!currentId) return tree;
-    return findNode(tree, currentId)?.children ?? [];
-  }, [tree, currentId]);
+  useEffect(() => {
+    let cancelled = false;
 
-  const breadcrumb: FolderNode[] = useMemo(() => {
-    if (!currentId) return [];
-    return buildPath(tree, currentId);
-  }, [tree, currentId]);
+    async function load() {
+      setLoading(true);
+      try {
+        await studyStorage.ensureDefaults();
+        const [children, path, results] = await Promise.all([
+          studyStorage.getChildren(currentId ?? STUDY_ROOT_ID),
+          studyStorage.getBreadcrumb(currentId),
+          search.trim() ? studyStorage.search(search.trim()) : Promise.resolve([]),
+        ]);
 
-  const searchResults = useMemo(() => {
-    if (!search.trim()) return [];
-    return flatSearch(tree, search.trim());
-  }, [tree, search]);
-
-  // ── CRUD ────────────────────────────────────────────────────────────────────
-
-  const handleCreate = (name: string) => {
-    // Inject current date when creating the folder
-    const newNode: FolderNode = {
-      id: generateId(),
-      name,
-      color: "#6366f1",
-      children: [],
-      createdAt: new Date().toISOString()
-    };
-
-    if (!currentId) {
-      setTree((prev) => [...prev, newNode]);
-    } else {
-      setTree((prev) =>
-        updateNode(prev, currentId, (n) => ({ ...n, children: [...n.children, newNode] }))
-      );
+        if (!cancelled) {
+          setItems(children);
+          setBreadcrumb(path);
+          setSearchResults(results);
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to load study items");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-    setCreating(false);
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentId, revision, search]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCount() {
+      if (!statusFolder || statusFolder.type !== "folder") {
+        setStatusCount(null);
+        return;
+      }
+
+      const count = await studyStorage.countDescendants(statusFolder.id);
+      if (!cancelled) setStatusCount(count);
+    }
+
+    loadCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [statusFolder]);
+
+  const isSearching = search.trim().length > 0;
+  const displayList = useMemo(
+    () => (isSearching ? searchResults : items),
+    [isSearching, items, searchResults]
+  );
+
+  const refresh = () => setRevision((value) => value + 1);
+
+  const handleCreate = async (name: string) => {
+    if (!creating) return;
+    await studyStorage.createItem(creating, name, currentId ?? STUDY_ROOT_ID);
+    setCreating(null);
+    refresh();
   };
 
-  const handleRename = (id: string, name: string) => {
-    setTree((prev) => updateNode(prev, id, (n) => ({ ...n, name })));
+  const handleRename = async (id: string, name: string) => {
+    await studyStorage.renameItem(id, name);
     setRenaming(null);
+    refresh();
   };
 
-  const handleChangeColor = (id: string, color: string) => {
-    setTree((prev) => updateNode(prev, id, (n) => ({ ...n, color })));
+  const handleChangeColor = async (id: string, color: string) => {
+    await studyStorage.changeColor(id, color);
     setColorTarget(null);
+    refresh();
   };
 
-  const handleDelete = (id: string) => {
-    setTree((prev) => deleteNode(prev, id));
-    const pathIds = breadcrumb.map((b) => b.id);
-    if (pathIds.includes(id)) setCurrentId(null);
+  const handleDelete = async (id: string) => {
+    if (DEFAULT_STUDY_IDS.has(id)) return;
+    await studyStorage.deleteSubtree(id);
+    if (currentId === id || breadcrumb.some((item) => item.id === id)) setCurrentId(null);
+    setTappedFolder(null);
+    setHoveredFolder(null);
+    refresh();
   };
 
-  // ── Reset handlers ──────────────────────────────────────────────────────────
-
-  const handleResetColors = () => {
-    setTree((prev) => resetColorsOnly(prev));
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    await handleDelete(deleteTarget.id);
+    setDeleteTarget(null);
   };
 
-  const handleResetNames = () => {
-    setTree((prev) => resetNamesOnly(prev));
+  const handleResetColors = async () => {
+    await studyStorage.resetDefaultColors();
+    refresh();
   };
 
-  // ── Navigate ────────────────────────────────────────────────────────────────
+  const handleResetNames = async () => {
+    await studyStorage.resetDefaultNames();
+    refresh();
+  };
 
   const navigateTo = (id: string | null) => {
     setCurrentId(id);
     setSearch("");
-    setTappedFolder(null); // clear tap selection when navigating
+    setTappedFolder(null);
   };
 
-  const isSearching = search.trim().length > 0;
-  const displayList = isSearching ? searchResults : currentChildren;
-
   return (
-    // pb-14 ensures content is not hidden behind our new fixed bottom bar
     <div className="space-y-6 pb-14">
-      {/* Header */}
-      <div className="flex items-end justify-between">
+      <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Study Manager</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Study Vault</h1>
           <p className="text-muted-foreground text-sm tracking-widest uppercase mt-1">
-            File-explorer style subject organiser
+            File-explorer style subject keeper for all your study needs!
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -555,19 +464,40 @@ export function StudyManager() {
           >
             <Settings className="h-4 w-4" />
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Folder
-          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="sm" variant="default" className="gap-2">
+                <Plus className="h-4 w-4" />
+                New Item
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-40 p-1" align="end">
+              {[
+                { id: "folder", label: "Folder", icon: Folder },
+                { id: "flashcard", label: "Flashcard", icon: Layers },
+                { id: "keypoints", label: "Keypoints", icon: FileText },
+
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-muted/60 transition-colors rounded-md text-left"
+                  onClick={() => setCreating(item.id as StudyItemType)}
+                >
+                  <item.icon className="h-4 w-4 text-muted-foreground" />
+                  {item.label}
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 
-      {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           className="pl-9"
-          placeholder="Search all folders..."
+          placeholder="Search all folders and files..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -581,7 +511,6 @@ export function StudyManager() {
         )}
       </div>
 
-      {/* Breadcrumb */}
       {!isSearching && (
         <nav className="flex items-center gap-1 text-sm flex-wrap">
           <button
@@ -591,18 +520,17 @@ export function StudyManager() {
             <Home className="h-3.5 w-3.5" />
             <span>Root</span>
           </button>
-          {breadcrumb.map((b, i) => (
-            <span key={b.id} className="flex items-center gap-1">
+          {breadcrumb.map((item, index) => (
+            <span key={item.id} className="flex items-center gap-1">
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               <button
-                className={`transition-colors hover:text-foreground ${i === breadcrumb.length - 1
-                  ? "text-foreground font-medium"
-                  : "text-muted-foreground"
-                  }`}
-                style={i === breadcrumb.length - 1 ? { color: b.color } : {}}
-                onClick={() => navigateTo(b.id)}
+                className={`transition-colors hover:text-foreground ${
+                  index === breadcrumb.length - 1 ? "text-foreground font-medium" : "text-muted-foreground"
+                }`}
+                style={index === breadcrumb.length - 1 ? { color: item.color } : {}}
+                onClick={() => navigateTo(item.id)}
               >
-                {b.name}
+                {item.name}
               </button>
             </span>
           ))}
@@ -611,60 +539,61 @@ export function StudyManager() {
 
       {isSearching && (
         <p className="text-xs text-muted-foreground tracking-widest uppercase">
-          Search results for &quot;{search}&quot; — {searchResults.length} found
+          Search results for &quot;{search}&quot; - {searchResults.length} found
         </p>
       )}
 
-      {/* Folder grid */}
-      {displayList.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center p-16 border rounded-lg border-dashed text-center">
+          <FolderOpen className="h-12 w-12 text-muted-foreground mb-4 opacity-20 animate-pulse" />
+          <p className="text-sm text-muted-foreground">Loading study items...</p>
+        </div>
+      ) : displayList.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-16 border rounded-lg border-dashed text-center">
           <FolderOpen className="h-12 w-12 text-muted-foreground mb-4 opacity-20" />
           <p className="text-sm text-muted-foreground">
-            {isSearching ? "No folders match your search." : "No folders here yet — create one!"}
+            {isSearching ? "No items match your search." : "No Items Here"}
           </p>
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {displayList.map((node) => (
+          {displayList.map((item) => (
             <FolderRow
-              key={node.id}
-              node={node}
-              onOpen={() => navigateTo(node.id)}
-              onRename={() => setRenaming(node)}
-              onChangeColor={() => setColorTarget(node)}
-              onDelete={() => handleDelete(node.id)}
-              onHoverEnter={() => setHoveredFolder(node)}
+              key={item.id}
+              item={item}
+              onOpen={() => {
+                if (item.type === "folder") navigateTo(item.id);
+                else setOpenedFile(item);
+              }}
+              onRename={() => setRenaming(item)}
+              onChangeColor={() => setColorTarget(item)}
+              onDelete={() => setDeleteTarget(item)}
+              onHoverEnter={() => setHoveredFolder(item)}
               onHoverLeave={() => setHoveredFolder(null)}
-              isSelected={statusFolder?.id === node.id}
-              onSelect={() => setTappedFolder(node)}
+              isSelected={statusFolder?.id === item.id}
+              onSelect={() => setTappedFolder(item)}
             />
           ))}
         </div>
       )}
 
-      {/* Bottom Status Bar */}
       <div className="fixed bottom-0 left-0 right-0 h-10 border-t bg-background/90 backdrop-blur-md flex items-center px-6 z-40 text-sm">
-        {hoveredFolder ? (
-          <div className="flex items-center gap-3 text-foreground">
-            {/* Icon + name — always shown */}
-            <FaFolder style={{ color: hoveredFolder.color }} />
-            <span className="font-semibold">{hoveredFolder.name}</span>
-
+        {statusFolder ? (
+          <div className="flex items-center gap-3 text-foreground min-w-0">
+            <ItemIcon type={statusFolder.type} color={statusFolder.color} className="h-4 w-4 shrink-0" />
+            <span className="font-semibold truncate">{statusFolder.name}</span>
             <span className="text-foreground/30 mx-1">|</span>
-
-            {/* Total items — always shown for all folders */}
-            <span className="text-muted-foreground">
-              {countTotalItems(hoveredFolder)}{" "}
-              {countTotalItems(hoveredFolder) === 1 ? "item" : "items"} total
+            <span className="text-muted-foreground whitespace-nowrap">
+              {statusFolder.type === "folder"
+                ? `${statusCount ?? "..."} ${statusCount === 1 ? "item" : "items"} total`
+                : statusFolder.type}
             </span>
-
-            {/* Creation date — only for user-created (non-default) folders */}
-            {!DEFAULT_IDS.has(hoveredFolder.id) && hoveredFolder.createdAt && (
+            {!DEFAULT_STUDY_IDS.has(statusFolder.id) && (
               <>
                 <span className="text-foreground/30 mx-1">|</span>
-                <span className="text-muted-foreground">
+                <span className="text-muted-foreground whitespace-nowrap">
                   Created{" "}
-                  {new Date(hoveredFolder.createdAt).toLocaleDateString(undefined, {
+                  {new Date(statusFolder.createdAt).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
@@ -674,42 +603,68 @@ export function StudyManager() {
             )}
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">Hover over a folder to view details</span>
+          <span className="text-xs text-muted-foreground">Hover over an item to view details</span>
         )}
       </div>
 
-      {/* Modals */}
       {creating && (
         <NameDialog
-          title="New Folder"
+          title={`New ${creating === "folder" ? "Folder" : creating.charAt(0).toUpperCase() + creating.slice(1)}`}
           onConfirm={handleCreate}
-          onClose={() => setCreating(false)}
+          onClose={() => setCreating(null)}
         />
       )}
-
       {renaming && (
         <NameDialog
-          title="Rename Folder"
+          title="Rename Item"
           initial={renaming.name}
           onConfirm={(name) => handleRename(renaming.id, name)}
           onClose={() => setRenaming(null)}
         />
       )}
-
       {colorTarget && (
         <ColorPickerModal
           color={colorTarget.color}
-          onChange={(c) => handleChangeColor(colorTarget.id, c)}
+          onChange={(color) => handleChangeColor(colorTarget.id, color)}
           onClose={() => setColorTarget(null)}
         />
       )}
-
       {settingsOpen && (
         <SettingsModal
           onResetColors={handleResetColors}
           onResetNames={handleResetNames}
           onClose={() => setSettingsOpen(false)}
         />
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm" onClick={() => setDeleteTarget(null)}>
+          <Card className="w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <CardContent className="pt-6 space-y-4">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-foreground">
+                  Delete {deleteTarget.type === "folder" ? "folder" : "file"}?
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Are you sure you want to delete &quot;{deleteTarget.name}&quot;?
+                  {deleteTarget.type === "folder" ? " Everything inside this folder will also be deleted." : ""}
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+                <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {openedFile?.type === "flashcard" && (
+        <FlashcardEditor fileId={openedFile.id} onClose={() => setOpenedFile(null)} />
+      )}
+
+      {openedFile?.type === "keypoints" && (
+        <KeyPointCreator fileId={openedFile.id} onClose={() => setOpenedFile(null)} />
       )}
     </div>
   );

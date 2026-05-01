@@ -6,7 +6,7 @@ export function useEcsQuery<T>(queryFn: () => Promise<T>, dependencies: any[] = 
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
-    setLoading(true);
+    setLoading(prev => data === undefined ? true : prev);
     try {
       const result = await queryFn();
       setData(result);
@@ -19,6 +19,13 @@ export function useEcsQuery<T>(queryFn: () => Promise<T>, dependencies: any[] = 
 
   useEffect(() => {
     fetchData();
+  }, dependencies);
+
+  // Listen for real-time background sync updates
+  useEffect(() => {
+    const handleDataChange = () => fetchData();
+    window.addEventListener('delta-data-changed', handleDataChange);
+    return () => window.removeEventListener('delta-data-changed', handleDataChange);
   }, dependencies);
 
   return { data, loading, refetch: fetchData };

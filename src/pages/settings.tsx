@@ -4,16 +4,23 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useTheme } from "@/components/theme-provider";
 import { getDB } from "@/ecs/store";
 import { toast } from "sonner";
-import { Monitor, Moon, Sun, Trash2, Database } from "lucide-react";
+import { Monitor, Moon, Sun, Trash2, Database, UserIcon, LogOut } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 export function Settings() {
   const { theme, setTheme } = useTheme();
+  const { user, logout } = useAuth();
+  
   const [stats, setStats] = useState<{ entities: number, components: number, storage: string }>({
     entities: 0,
     components: 0,
     storage: "Calculating..."
   });
   const [isResetting, setIsResetting] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -33,8 +40,6 @@ export function Settings() {
   }, []);
 
   const handleReset = async () => {
-    if (!confirm("Are you sure you want to completely wipe your workspace? This cannot be undone.")) return;
-    
     setIsResetting(true);
     try {
       const db = await getDB();
@@ -53,6 +58,7 @@ export function Settings() {
     } catch (e) {
       toast.error("Failed to reset workspace");
       setIsResetting(false);
+      setShowResetModal(false);
     }
   };
 
@@ -64,6 +70,35 @@ export function Settings() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserIcon className="h-5 w-5" />
+              Profile Information
+            </CardTitle>
+            <CardDescription>
+              Update your display name and manage your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-4">
+              {user?.photoURL && (
+                <img src={user.photoURL} alt="Profile" className="w-16 h-16 rounded-full border border-border" />
+              )}
+              <div>
+                <p className="font-medium text-lg">{user?.displayName}</p>
+                <p className="text-sm text-muted-foreground">{user?.email}</p>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="flex gap-4 border-t px-6 py-4">
+            <Button variant="outline" onClick={logout} className="gap-2 text-destructive hover:text-destructive">
+              <LogOut className="h-4 w-4" />
+              Sign Out
+            </Button>
+          </CardFooter>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Appearance</CardTitle>
@@ -115,19 +150,48 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        <Card className="border-destructive/50">
+        <Card className="border-destructive/50 md:col-span-2">
           <CardHeader>
             <CardTitle className="text-destructive">Danger Zone</CardTitle>
             <CardDescription>Permanently delete all your local data.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Button variant="destructive" onClick={handleReset} disabled={isResetting} className="w-full">
+            <Button variant="destructive" onClick={() => setShowResetModal(true)} disabled={isResetting} className="w-full md:w-auto">
               <Trash2 className="mr-2 h-4 w-4" />
               {isResetting ? "Resetting..." : "Reset Workspace"}
             </Button>
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={showResetModal} onOpenChange={setShowResetModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Reset Workspace</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. This will permanently delete your entire local workspace, including all ideas, todos, and study materials.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm font-medium mb-2">Please type <span className="font-bold">delete</span> to confirm.</p>
+            <Input 
+              value={resetConfirmText} 
+              onChange={(e) => setResetConfirmText(e.target.value)} 
+              placeholder="Type 'delete' here..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowResetModal(false)}>Cancel</Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleReset} 
+              disabled={resetConfirmText.toLowerCase() !== "delete" || isResetting}
+            >
+              {isResetting ? "Deleting..." : "Permanently Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

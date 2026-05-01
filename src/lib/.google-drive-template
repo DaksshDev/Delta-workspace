@@ -1,0 +1,201 @@
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
+const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
+const GIS_SCRIPT = "https://accounts.google.com/gsi/client";
+
+export const DRIVE_BACKUP_FILE = "delta-board-backup.json";
+export const DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+
+type TokenResponse = {
+  access_token?: string;
+  error?: string;
+};
+
+type TokenClient = {
+  requestAccessToken: (options?: { prompt?: string }) => void;
+};
+
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        oauth2?: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: TokenResponse) => void;
+          }) => TokenClient;
+        };
+      };
+    };
+  }
+}
+
+export type DriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  parents?: string[];
+};
+
+export function getGoogleDriveConfig() {
+  return {
+    //apiKey,
+    //clientId,
+    //examFolderId
+  };
+}
+
+export function driveDownloadUrl(fileId: string, apiKey?: string) {
+  const key = apiKey ? `&key=${encodeURIComponent(apiKey)}` : "";
+  return `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media${key}`;
+}
+
+export async function requestDriveToken(clientId: string): Promise<string> {
+  if (!clientId) throw new Error("Missing VITE_GOOGLE_CLIENT_ID");
+  await loadGoogleIdentityScript();
+
+  return new Promise((resolve, reject) => {
+    const oauth = window.google?.accounts?.oauth2;
+    if (!oauth) {
+      reject(new Error("Google Identity Services failed to load"));
+      return;
+    }
+
+    const client = oauth.initTokenClient({
+      client_id: clientId,
+      scope: DRIVE_APPDATA_SCOPE,
+      callback: (response) => {
+        if (response.error || !response.access_token) reject(new Error(response.error || "Google authorization failed"));
+        else resolve(response.access_token);
+      },
+    });
+
+    client.requestAccessToken({ prompt: "consent" });
+  });
+}
+
+export async function uploadDriveBackup(accessToken: string, json: string) {
+  const existing = await findDriveBackup(accessToken);
+  if (existing) {
+    await uploadMultipart(
+      `${DRIVE_UPLOAD_API}/files/${existing.id}?uploadType=multipart`,
+      "PATCH",
+      accessToken,
+      { name: DRIVE_BACKUP_FILE },
+      json
+    );
+    return existing.id;
+  }
+
+  const created = await uploadMultipart(
+    `${DRIVE_UPLOAD_API}/files?uploadType=multipart`,
+    "POST",
+    accessToken,
+    { name: DRIVE_BACKUP_FILE, parents: ["appDataFolder"] },
+    json
+  );
+  return created.id;
+}
+
+export async function downloadDriveBackup(accessToken: string) {
+  const existing = await findDriveBackup(accessToken);
+  if (!existing) throw new Error("No Google Drive backup found");
+
+  const response = await fetch(driveDownloadUrl(existing.id), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) throw new Error(`Failed to download Drive backup (${response.status})`);
+  return response.text();
+}
+
+export async function listPublicDriveFolder(folderId: string, apiKey: string): Promise<DriveFile[]> {
+  if (!folderId) throw new Error("Missing VITE_EXAM_DRIVE_FOLDER_ID");
+  if (!apiKey) throw new Error("Missing VITE_GOOGLE_DRIVE_API_KEY");
+
+  const files: DriveFile[] = [];
+  let pageToken = "";
+
+  do {
+    const params = new URLSearchParams({
+      key: apiKey,
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: "nextPageToken, files(id, name, mimeType, size, parents)",
+      pageSize: "1000",
+      orderBy: "folder,name",
+      includeItemsFromAllDrives: "true",
+      supportsAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const response = await fetch(`${DRIVE_API}/files?${params.toString()}`);
+    if (!response.ok) throw new Error(`Failed to fetch Drive folder (${response.status})`);
+    const data = await response.json();
+    files.push(...(data.files ?? []));
+    pageToken = data.nextPageToken ?? "";
+  } while (pageToken);
+
+  return files;
+}
+
+async function findDriveBackup(accessToken: string): Promise<DriveFile | null> {
+  const params = new URLSearchParams({
+    spaces: "appDataFolder",
+    q: `name = '${DRIVE_BACKUP_FILE}' and trashed = false`,
+    fields: "files(id, name, mimeType)",
+  });
+
+  const response = await fetch(`${DRIVE_API}/files?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) throw new Error(`Failed to find Drive backup (${response.status})`);
+  const data = await response.json();
+  return data.files?.[0] ?? null;
+}
+
+async function uploadMultipart(url: string, method: "POST" | "PATCH", accessToken: string, metadata: Record<string, unknown>, json: string) {
+  const boundary = `delta_board_${Date.now()}`;
+  const body = [
+    `--${boundary}`,
+    "Content-Type: application/json; charset=UTF-8",
+    "",
+    JSON.stringify(metadata),
+    `--${boundary}`,
+    "Content-Type: application/json",
+    "",
+    json,
+    `--${boundary}--`,
+  ].join("\r\n");
+
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+  if (!response.ok) throw new Error(`Failed to upload Drive backup (${response.status})`);
+  return response.json();
+}
+
+function loadGoogleIdentityScript() {
+  if (window.google?.accounts?.oauth2) return Promise.resolve();
+
+  return new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${GIS_SCRIPT}"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load Google Identity Services")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = GIS_SCRIPT;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+    document.head.appendChild(script);
+  });
+}

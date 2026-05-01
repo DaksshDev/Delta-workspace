@@ -18,9 +18,11 @@ export interface FolderComponent extends Component { type: 'folder'; data: { fol
 export interface StatusComponent extends Component { type: 'status'; data: { status: string } }
 export interface PriorityComponent extends Component { type: 'priority'; data: { priority: string } }
 export interface MetadataComponent extends Component { type: 'metadata'; data: Record<string, any> }
+export interface ColorComponent extends Component { type: 'color'; data: { color: string } }
 export interface RelationComponent extends Component { type: 'relation'; data: { relations: { type: string; targetId: string }[] } }
 
 export const ENTITY_TYPES = {
+  STUDY_FOLDER: 'study_folder',
   IDEA: 'idea',
   TODO: 'todo',
   SUBJECT: 'subject',

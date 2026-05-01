@@ -3,8 +3,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { TimerPreset } from "@/pages/timer";
 import { Trash2 } from "lucide-react";
+
+export type TimerPreset = {
+  id: string;
+  name: string;
+  duration: number; // in seconds
+};
 
 interface PresetModalProps {
   open: boolean;

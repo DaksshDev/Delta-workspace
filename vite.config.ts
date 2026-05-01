@@ -19,15 +19,22 @@ export default defineConfig({
       registerType: "autoUpdate",
       manifest: {
         name: "Delta Board",
-        short_name: "Δ Board",
+        short_name: "Delta Board",
+        description: "A personal productivity workspace for todos, study planning, progress tracking, reminders, exams, and backups.",
         theme_color: "#000000",
         background_color: "#000000",
         display: "standalone",
+        start_url: "/",
         icons: [
           {
-            src: "favicon.svg",
-            sizes: "any",
-            type: "image/svg+xml",
+            src: "favicon.png",
+            sizes: "512x512",
+            type: "image/png",
+          },
+          {
+            src: "delta-board-logo.png",
+            sizes: "512x512",
+            type: "image/png",
             purpose: "maskable any",
           },
         ],

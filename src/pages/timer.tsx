@@ -4,16 +4,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Play, Pause, RotateCcw, Pencil } from "lucide-react";
 import { ecsApi } from "@/ecs/api";
 import { ENTITY_TYPES } from "@/ecs/entities";
-import { PresetModal } from "@/components/PresetModal";
+import { PresetModal, TimerPreset } from "@/components/PresetModal";
 import { toast } from "sonner";
 
-export type TimerPreset = {
-  id: string;
-  name: string;
-  duration: number; // in seconds
-};
-
-export const DEFAULT_PRESETS: TimerPreset[] = [
+const DEFAULT_PRESETS: TimerPreset[] = [
   { id: "pomodoro", name: "Pomodoro", duration: 25 * 60 },
   { id: "shortBreak", name: "Short Break", duration: 5 * 60 },
   { id: "longBreak", name: "Long Break", duration: 15 * 60 },
