@@ -78,6 +78,8 @@ function AppContent() {
   const [initializedFor, setInitializedFor] = useState<string | null>(null);
   const [showWelcomeBackModal, setShowWelcomeBackModal] = useState(false);
   const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
+  const [syncConflict, setSyncConflict] = useState<{ mismatches: string[]; queueCount: number } | null>(null);
+  const [isResolvingConflict, setIsResolvingConflict] = useState(false);
 
   // Initialize the local workspace. Signed-in users sync first so cloud data is
   // not mistaken for an empty/default local workspace.
@@ -104,7 +106,11 @@ function AppContent() {
           const result = await SyncSystem.init(user.uid);
           const timeTaken = ((Date.now() - startTime) / 1000).toFixed(1);
 
-          if (mounted && result.action === 'pulled') {
+          if (mounted && result.action === 'conflict') {
+            setSyncConflict({ mismatches: result.mismatches, queueCount: result.queueCount });
+            setWorkspaceReady(true);
+            return;
+          } else if (mounted && result.action === 'pulled') {
             setShowWelcomeBackModal(true);
             toast.success(`Successfully pulled ${result.items} items from cloud in ${timeTaken}s`);
           } else if (mounted && result.action === 'pushed') {
@@ -132,7 +138,33 @@ function AppContent() {
     return () => { mounted = false; };
   }, [user, loading, initializedFor, logout]);
 
-  if (loading || !workspaceReady || isSyncingWorkspace) {
+  const resolveSyncConflict = async (choice: "local" | "firebase") => {
+    if (!user) return;
+    setIsResolvingConflict(true);
+    try {
+      if (choice === "local") {
+        await SyncSystem.keepLocalVersion();
+        toast.success("Firebase was overwritten with this device's data.");
+      } else {
+        const items = await SyncSystem.useFirebaseVersion();
+        setShowWelcomeBackModal(true);
+        toast.success(`Loaded ${items} items from Firebase.`);
+      }
+
+      await SeedSystem.seedIfEmpty();
+      setInitializedFor(user.uid);
+      setSyncConflict(null);
+      setWorkspaceReady(true);
+      window.dispatchEvent(new Event("delta-data-changed"));
+    } catch (error) {
+      console.error("App: Failed to resolve sync conflict", error);
+      toast.error(error instanceof Error ? error.message : "Failed to resolve sync conflict.");
+    } finally {
+      setIsResolvingConflict(false);
+    }
+  };
+
+  if (loading || (!workspaceReady && !syncConflict) || isSyncingWorkspace) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background">
         <div className="h-10 w-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -168,6 +200,52 @@ function AppContent() {
                 Sign in with Google
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Sync Conflict Modal */}
+      {syncConflict && (
+        <Dialog open={true}>
+          <DialogContent className="sm:max-w-[500px]" onPointerDownOutside={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle>Choose which version to keep</DialogTitle>
+              <DialogDescription>
+                This device and Firebase both have workspace data, but they do not match. Pick one version before sync continues.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-3">
+              <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                {syncConflict.queueCount > 0
+                  ? `${syncConflict.queueCount} local change${syncConflict.queueCount === 1 ? "" : "s"} are waiting to sync.`
+                  : "Local and Firebase records differ."}
+              </div>
+              {syncConflict.mismatches.length > 0 && (
+                <div className="max-h-32 overflow-auto rounded-md border p-3 text-xs text-muted-foreground">
+                  {syncConflict.mismatches.slice(0, 6).map((mismatch) => (
+                    <p key={mismatch}>{mismatch}</p>
+                  ))}
+                  {syncConflict.mismatches.length > 6 && (
+                    <p>{syncConflict.mismatches.length - 6} more difference{syncConflict.mismatches.length - 6 === 1 ? "" : "s"}.</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                variant="outline"
+                disabled={isResolvingConflict}
+                onClick={() => resolveSyncConflict("firebase")}
+              >
+                Use Firebase version
+              </Button>
+              <Button
+                disabled={isResolvingConflict}
+                onClick={() => resolveSyncConflict("local")}
+              >
+                Keep this version
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       )}

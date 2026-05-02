@@ -9,7 +9,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { VscLayoutSidebarLeft } from "react-icons/vsc";
 import { useAuth } from "@/lib/auth-context";
-import { SyncSystem } from "@/ecs/sync";
+import { SYNC_STATE_EVENT, SyncSystem } from "@/ecs/sync";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,23 +19,37 @@ import {
   DropdownMenuTrigger
 } from "./ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { LogOut, User as UserIcon, Settings as SettingsIcon, Cloud, CloudOff, RefreshCw } from "lucide-react";
+import { AlertCircle, LogOut, User as UserIcon, Settings as SettingsIcon, Cloud, CloudOff, RefreshCw } from "lucide-react";
 
 export function TopBar() {
   const { mode, setMode, sidebarOpen, setSidebarOpen } = useAppStore();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [syncState, setSyncState] = useState<{ queue: number, online: boolean }>({ queue: 0, online: true });
+  const [syncState, setSyncState] = useState<{ queue: number, online: boolean, processing: boolean, verified: boolean }>({
+    queue: 0,
+    online: true,
+    processing: false,
+    verified: true,
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
     const updateSync = async () => {
-      const q = await SyncSystem.getQueueCount();
-      setSyncState({ queue: q, online: SyncSystem.isOnline });
+      const status = await SyncSystem.getStatus();
+      setSyncState({
+        queue: status.queueCount,
+        online: status.isOnline,
+        processing: status.isProcessing,
+        verified: status.lastVerifiedAt !== null && status.verificationMismatches.length === 0 && !status.lastVerificationError,
+      });
     };
     updateSync();
+    window.addEventListener(SYNC_STATE_EVENT, updateSync);
     const interval = setInterval(updateSync, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(SYNC_STATE_EVENT, updateSync);
+    };
   }, []);
 
   const handleCommandPalette = () => {
@@ -120,8 +134,10 @@ export function TopBar() {
               >
                 {!syncState.online ? (
                   <CloudOff className="h-4 w-4 text-destructive" />
-                ) : syncState.queue > 0 ? (
+                ) : syncState.processing || syncState.queue > 0 ? (
                   <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
+                ) : !syncState.verified ? (
+                  <AlertCircle className="h-4 w-4 text-amber-500" />
                 ) : (
                   <Cloud className="h-4 w-4 text-green-500" />
                 )}
@@ -131,9 +147,13 @@ export function TopBar() {
               <p>
                 {!syncState.online
                   ? "Offline - Changes saved locally"
-                  : syncState.queue > 0
-                    ? `Syncing ${syncState.queue} items...`
-                    : "Cloud synced"}
+                  : syncState.processing
+                    ? "Syncing in background..."
+                    : syncState.queue > 0
+                      ? `${syncState.queue} item${syncState.queue === 1 ? "" : "s"} queued for background sync`
+                      : syncState.verified
+                        ? "Cloud verified"
+                        : "Cloud verification needs attention"}
               </p>
             </TooltipContent>
           </Tooltip>
