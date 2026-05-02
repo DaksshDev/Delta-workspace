@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import confetti from "canvas-confetti";
-import { Check, CheckCircle2, ChevronDown, ChevronRight, Folder, MoreVertical, Palette, Plus, Tags, Trash2, X } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, ChevronRight, Download, Folder, MoreVertical, Palette, Plus, Tags, Trash2, X } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { ecsApi } from "@/ecs/api";
 import { ENTITY_TYPES } from "@/ecs/entities";
@@ -16,6 +16,8 @@ import { TagEditor } from "@/components/tag-editor";
 import { cn, getContrastColor } from "@/lib/utils";
 import { tagsApi } from "@/lib/tags-api";
 import type { TagDef } from "@/types/tags";
+import { ReadableExportDialog } from "@/components/readable-export-dialog";
+import { getReadableExport } from "@/lib/readable-data";
 import {
   calculateNodeProgress,
   createSubject,
@@ -39,6 +41,8 @@ export function Todos() {
   const [subjectFilter, setSubjectFilter] = useState("all");
   const [subjectFolders, setSubjectFolders] = useState<Record<string, boolean>>({});
   const [revision, setRevision] = useState(0);
+  const [exportData, setExportData] = useState<unknown>(null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const refresh = () => setRevision((value) => value + 1);
 
@@ -81,6 +85,11 @@ export function Todos() {
     return groupedTodos.filter((group) => group.id === subjectFilter && group.tasks.length > 0);
   }, [groupedTodos, subjectFilter]);
 
+  const handleExport = async () => {
+    setExportData(await getReadableExport("todos"));
+    setExportOpen(true);
+  };
+
   return (
     <div className="space-y-5 pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -91,6 +100,9 @@ export function Todos() {
         <div className="flex flex-wrap items-center gap-2">
           <SubjectManager subjects={subjects} onRefresh={refresh} />
           <TagEditor api={tagsApi} dialogTitle="Todo Tag Manager" />
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleExport} aria-label="Export todos">
+            <Download className="h-4 w-4" />
+          </Button>
           <select
             className="h-8 rounded-md border bg-background px-3 text-xs"
             value={subjectFilter}
@@ -162,6 +174,13 @@ export function Todos() {
           ))}
         </div>
       )}
+      <ReadableExportDialog
+        open={exportOpen}
+        title="Export Todos"
+        filename="delta-board-todos.json"
+        data={exportData ?? {}}
+        onOpenChange={setExportOpen}
+      />
     </div>
   );
 }

@@ -1,11 +1,13 @@
 import { db } from "@/lib/firebase";
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, onSnapshot, writeBatch } from "firebase/firestore";
 import { getDB } from "./store";
+import { getCloudRawWorkspaceData, getLocalRawWorkspaceData, summarizeReadableDifferences } from "@/lib/readable-data";
 
 const DEFAULT_SYNC_INTERVAL_MS = 60_000;
 const MIN_SYNC_INTERVAL_MS = 5_000;
 const SYNC_INTERVAL_STORAGE_KEY = "delta-board.syncIntervalMs";
 const SYNC_STATE_EVENT = "delta-sync-state-changed";
+const MAX_FIRESTORE_BATCH_WRITES = 450;
 
 type SyncCollectionConfig = {
   firestoreName: string;
@@ -118,6 +120,34 @@ function getOperationTarget(op: SyncOperation): { collectionName: string; docId:
   return null;
 }
 
+type CompactedSyncOperation = SyncOperation & {
+  queueIds: number[];
+  collectionName: string;
+  docId: string;
+};
+
+function compactSyncQueue(queue: SyncOperation[]): CompactedSyncOperation[] {
+  const compacted = new Map<string, CompactedSyncOperation>();
+
+  queue
+    .slice()
+    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0) || a.timestamp - b.timestamp)
+    .forEach((op) => {
+      const target = getOperationTarget(op);
+      if (!target || op.id === undefined) return;
+      const key = `${target.collectionName}/${target.docId}`;
+      const existing = compacted.get(key);
+      compacted.set(key, {
+        ...op,
+        queueIds: [...(existing?.queueIds ?? []), op.id],
+        collectionName: target.collectionName,
+        docId: target.docId,
+      });
+    });
+
+  return Array.from(compacted.values());
+}
+
 async function getLocalItemCount() {
   const idb = await getDB();
   const counts = await Promise.all(
@@ -127,34 +157,11 @@ async function getLocalItemCount() {
 }
 
 async function compareLocalWithCloud(uid: string) {
-  const mismatches: string[] = [];
-  const idb = await getDB();
-
-  for (const config of SYNC_COLLECTIONS) {
-    const [localItems, remoteSnapshot] = await Promise.all([
-      idb.getAll(config.idbName as any),
-      getDocs(collection(db, `users/${uid}/${config.firestoreName}`)),
-    ]);
-    const localById = new Map(localItems.map((item: any) => [getDocId(config, item), item]));
-    const remoteById = new Map(remoteSnapshot.docs.map((remoteDoc) => [remoteDoc.id, remoteDoc.data()]));
-
-    localById.forEach((localItem, id) => {
-      const remoteItem = remoteById.get(id);
-      if (!remoteItem) {
-        mismatches.push(`${config.firestoreName}/${id} is missing in Firebase`);
-      } else if (!dataMatches(localItem, remoteItem)) {
-        mismatches.push(`${config.firestoreName}/${id} differs between local and Firebase`);
-      }
-    });
-
-    remoteById.forEach((_remoteItem, id) => {
-      if (!localById.has(id)) {
-        mismatches.push(`${config.firestoreName}/${id} exists only in Firebase`);
-      }
-    });
-  }
-
-  return mismatches;
+  const [localRaw, cloudRaw] = await Promise.all([
+    getLocalRawWorkspaceData(),
+    getCloudRawWorkspaceData(uid),
+  ]);
+  return summarizeReadableDifferences(localRaw, cloudRaw);
 }
 
 export const SyncSystem = {
@@ -250,33 +257,50 @@ export const SyncSystem = {
 
   async pushAllToCloud() {
     if (!this.uid || !this.isOnline) return;
+    const uid = this.uid;
     console.log("Sync: Pushing all local data to cloud (Firestore)...");
     try {
       const idb = await getDB();
+      let batch = writeBatch(db);
+      let writeCount = 0;
+
+      const queueBatchWrite = async (write: () => void) => {
+        write();
+        writeCount++;
+        if (writeCount >= MAX_FIRESTORE_BATCH_WRITES) {
+          await batch.commit();
+          batch = writeBatch(db);
+          writeCount = 0;
+        }
+      };
 
       for (const config of SYNC_COLLECTIONS) {
         const localItems = await idb.getAll(config.idbName as any);
         const localIds = new Set(localItems.map((item: any) => getDocId(config, item)));
-        const remoteSnapshot = await getDocs(collection(db, `users/${this.uid}/${config.firestoreName}`));
+        const remoteSnapshot = await getDocs(collection(db, `users/${uid}/${config.firestoreName}`));
 
         for (const remoteDoc of remoteSnapshot.docs) {
           if (!localIds.has(remoteDoc.id)) {
-            await deleteDoc(doc(db, `users/${this.uid}/${config.firestoreName}`, remoteDoc.id));
+            await queueBatchWrite(() => batch.delete(doc(db, `users/${uid}/${config.firestoreName}`, remoteDoc.id)));
           }
         }
 
         for (const item of localItems) {
-          await setDoc(doc(db, `users/${this.uid}/${config.firestoreName}`, getDocId(config, item)), item);
+          await queueBatchWrite(() => batch.set(doc(db, `users/${uid}/${config.firestoreName}`, getDocId(config, item)), item));
         }
       }
 
       // Mark user document as having data
-      await setDoc(doc(db, "users", this.uid), { hasData: true }, { merge: true });
+      await queueBatchWrite(() => batch.set(doc(db, "users", uid), { hasData: true, lastSyncedAt: Date.now() }, { merge: true }));
+      if (writeCount > 0) {
+        await batch.commit();
+      }
 
       await this.verifySync();
       console.log("Sync: All data pushed to Firestore successfully.");
     } catch (error) {
       console.error("Sync: Failed to push all data", error);
+      throw error;
     }
   },
 
@@ -286,28 +310,36 @@ export const SyncSystem = {
     this.dispatchStatusChanged();
   },
 
-  async keepLocalVersion() {
+  async keepLocalVersion(onProgress?: (message: string) => void) {
     if (!this.uid || !this.isOnline) throw new Error("Cannot overwrite Firebase while offline.");
+    onProgress?.("Uploading this device's workspace to Firebase...");
     await this.pushAllToCloud();
+    onProgress?.("Checking that Firebase matches this device...");
     const verification = await this.verifySync();
     if (!verification.ok) {
       throw new Error(verification.mismatches[0] || "Firebase did not match local data after overwrite.");
     }
+    onProgress?.("Clearing old pending sync operations...");
     await this.clearQueue();
     this.isInitialized = true;
+    onProgress?.("Restarting background sync...");
     this.setupRealtimeListeners();
     this.startBackgroundSync();
   },
 
-  async useFirebaseVersion(): Promise<number> {
+  async useFirebaseVersion(onProgress?: (message: string) => void): Promise<number> {
     if (!this.uid || !this.isOnline) throw new Error("Cannot pull Firebase while offline.");
+    onProgress?.("Clearing local pending sync operations...");
     await this.clearQueue();
+    onProgress?.("Downloading the Firebase workspace...");
     const items = await this.pullFromCloud();
+    onProgress?.("Checking that this device matches Firebase...");
     const verification = await this.verifySync();
     if (!verification.ok) {
       throw new Error(verification.mismatches[0] || "Local data did not match Firebase after pull.");
     }
     this.isInitialized = true;
+    onProgress?.("Restarting background sync...");
     this.setupRealtimeListeners();
     this.startBackgroundSync();
     return items;
@@ -380,35 +412,65 @@ export const SyncSystem = {
       const idb = await getDB();
       const queue = await idb.getAll('syncQueue');
       if (queue.length === 0) {
-        await this.verifySync();
         return;
       }
 
-      for (const op of queue) {
-        try {
-          await this.writeToCloud(op);
-          if (op.id !== undefined) {
-            await idb.delete('syncQueue', op.id);
-          }
-          this.lastSyncAt = Date.now();
-        } catch (error: any) {
-          console.error("Sync: Failed to process op, will retry later", op, error);
-          // If the network is suddenly offline, break out to stop further attempts
-          if (!this.isOnline || error.code === 'unavailable') {
-            break;
-          }
-        }
+      const compacted = compactSyncQueue(queue);
+      if (compacted.length === 0) {
+        await idb.clear('syncQueue');
+        return;
       }
 
-      if ((await idb.count('syncQueue')) === 0) {
-        await this.verifySync();
+      await this.commitCompactedQueue(compacted);
+
+      const deleteTx = idb.transaction('syncQueue', 'readwrite');
+      for (const id of compacted.flatMap((op) => op.queueIds)) {
+        await deleteTx.store.delete(id);
       }
+      await deleteTx.done;
+
+      this.lastSyncAt = Date.now();
+      this.lastVerificationError = null;
+      this.verificationMismatches = [];
     } catch (error) {
       console.error("Sync: Critical error processing queue", error);
     } finally {
       this.isProcessingQueue = false;
       this.scheduleNextSync();
       this.dispatchStatusChanged();
+    }
+  },
+
+  async commitCompactedQueue(ops: CompactedSyncOperation[]) {
+    if (!this.uid) return;
+    const uid = this.uid;
+
+    let batch = writeBatch(db);
+    let writeCount = 0;
+
+    const commitIfFull = async () => {
+      if (writeCount < MAX_FIRESTORE_BATCH_WRITES) return;
+      await batch.commit();
+      batch = writeBatch(db);
+      writeCount = 0;
+    };
+
+    for (const op of ops) {
+      const ref = doc(db, `users/${uid}/${op.collectionName}`, op.docId);
+      if (op.type.endsWith('_delete')) {
+        batch.delete(ref);
+      } else {
+        batch.set(ref, op.data);
+      }
+      writeCount++;
+      await commitIfFull();
+    }
+
+    batch.set(doc(db, "users", uid), { hasData: true, lastSyncedAt: Date.now() }, { merge: true });
+    writeCount++;
+
+    if (writeCount > 0) {
+      await batch.commit();
     }
   },
 
@@ -517,7 +579,14 @@ export const SyncSystem = {
 
   async verifySync(): Promise<SyncVerificationResult> {
     if (!this.uid || !this.isOnline) {
-      return { ok: false, checkedAt: Date.now(), mismatches: ["Sync verification skipped while offline or signed out."] };
+      const message = !this.uid
+        ? "Sync verification skipped because no user is signed in."
+        : "Sync verification skipped while offline.";
+      this.lastVerifiedAt = null;
+      this.lastVerificationError = message;
+      this.verificationMismatches = [message];
+      this.dispatchStatusChanged();
+      return { ok: false, checkedAt: Date.now(), mismatches: [message] };
     }
 
     const mismatches: string[] = [];
@@ -583,7 +652,6 @@ export const SyncSystem = {
         
         if (changed) {
           window.dispatchEvent(new Event('delta-data-changed'));
-          this.verifySync().catch((error) => console.warn("Sync: Listener verification failed", error));
         }
       }, (error) => {
         console.warn(`Sync: onSnapshot error for ${coll.firestoreName}`, error);

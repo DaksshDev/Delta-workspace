@@ -1,5 +1,6 @@
 import { ecsApi } from "@/ecs/api";
 import { ENTITY_TYPES, type Component, type Entity } from "@/ecs/entities";
+import { getDB } from "@/ecs/store";
 import { studyStorage } from "@/lib/study-storage";
 
 export type Subject = {
@@ -82,9 +83,10 @@ export async function getTodoTree(): Promise<TodoNode[]> {
 export async function getSubjects(): Promise<Subject[]> {
   await studyStorage.ensureDefaults();
 
-  const [subjects, studyFolders, components, folderComponents] = await Promise.all([
+  const db = await getDB();
+  const [subjects, studyItems, components, folderComponents] = await Promise.all([
     ecsApi.getEntitiesByType(ENTITY_TYPES.SUBJECT),
-    ecsApi.getEntitiesByType(ENTITY_TYPES.STUDY_FOLDER),
+    db.getAll("studyItems"),
     ecsApi.getComponentsByEntityType(ENTITY_TYPES.SUBJECT),
     ecsApi.getComponentsByEntityType(ENTITY_TYPES.STUDY_FOLDER),
   ]);
@@ -101,16 +103,18 @@ export async function getSubjects(): Promise<Subject[]> {
       parentId: null,
     }));
 
-  const studySubjects = studyFolders.map((folder) => ({
+  const studySubjects = studyItems
+    .filter((item) => item.type === "folder")
+    .map((folder) => ({
       id: folder.id,
       aliases: [folder.id],
-      name: getComp(folderComponents, folder.id, "title")?.data?.title || "Untitled Subject",
-      color: getComp(folderComponents, folder.id, "color")?.data?.color || "#3b82f6",
+      name: folder.name || getComp(folderComponents, folder.id, "title")?.data?.title || "Study folder",
+      color: folder.color || getComp(folderComponents, folder.id, "color")?.data?.color || "#3b82f6",
       healthyWhenEmpty: true,
-      order: getComp(folderComponents, folder.id, "metadata")?.data?.order ?? folder.createdAt,
-      createdAt: folder.createdAt,
+      order: folder.order ?? getComp(folderComponents, folder.id, "metadata")?.data?.order ?? 0,
+      createdAt: Date.parse(folder.createdAt) || Date.now(),
       source: "study-folder" as const,
-      parentId: getComp(folderComponents, folder.id, "metadata")?.data?.parentId || null,
+      parentId: folder.parentId || getComp(folderComponents, folder.id, "metadata")?.data?.parentId || null,
     }));
 
   const byName = new Map<string, Subject>();

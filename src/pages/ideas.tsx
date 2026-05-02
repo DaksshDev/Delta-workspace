@@ -23,6 +23,7 @@ import {
   Vault,
   BadgeCheck,
   AlertTriangle,
+  Download,
 } from "lucide-react";
 
 import { HexColorPicker } from "react-colorful";
@@ -35,6 +36,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Check } from "lucide-react";
 import { cn, getContrastColor } from "@/lib/utils";
 import { VaultGrid, ActiveVaultPanel } from "@/components/vault-panel";
+import { ReadableExportDialog } from "@/components/readable-export-dialog";
+import { getReadableExport } from "@/lib/readable-data";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -910,6 +913,8 @@ export function Ideas() {
   const [showVaultList, setShowVaultList] = useState(false);
   const [search, setSearch] = useState("");
   const [folderToDelete, setFolderToDelete] = useState<FolderType | null>(null);
+  const [exportData, setExportData] = useState<unknown>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const isLoadingFoldersRef = useRef(false);
   const skipNextFolderSaveRef = useRef(false);
 
@@ -1080,6 +1085,11 @@ export function Ideas() {
     );
   };
 
+  const handleExport = async () => {
+    setExportData(await getReadableExport("ideas"));
+    setExportOpen(true);
+  };
+
   // ── Drag & Drop ───────────────────────────────────────────────────────────
 
   const handleDragStart = (id: string) => setDraggingId(id);
@@ -1163,6 +1173,9 @@ export function Ideas() {
             <Button variant="outline" size="sm" onClick={() => setShowCreateFolder(true)}>
               <FolderPlus className="h-4 w-4 mr-2" />
               Create Folder
+            </Button>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleExport} aria-label="Export idea dump">
+              <Download className="h-4 w-4" />
             </Button>
             {vaults.length > 0 && (
               <Button
@@ -1355,6 +1368,13 @@ export function Ideas() {
           onDeleteWithIdeas={() => handleDeleteFolderWithIdeas(folderToDelete)}
         />
       )}
+      <ReadableExportDialog
+        open={exportOpen}
+        title="Export Idea Dump"
+        filename="delta-board-ideas.json"
+        data={exportData ?? {}}
+        onOpenChange={setExportOpen}
+      />
     </div>
   );
 }

@@ -80,6 +80,9 @@ function AppContent() {
   const [isSyncingWorkspace, setIsSyncingWorkspace] = useState(false);
   const [syncConflict, setSyncConflict] = useState<{ mismatches: string[]; queueCount: number } | null>(null);
   const [isResolvingConflict, setIsResolvingConflict] = useState(false);
+  const [conflictChoice, setConflictChoice] = useState<"local" | "firebase" | null>(null);
+  const [conflictProgress, setConflictProgress] = useState("");
+  const [conflictError, setConflictError] = useState<string | null>(null);
 
   // Initialize the local workspace. Signed-in users sync first so cloud data is
   // not mistaken for an empty/default local workspace.
@@ -141,16 +144,20 @@ function AppContent() {
   const resolveSyncConflict = async (choice: "local" | "firebase") => {
     if (!user) return;
     setIsResolvingConflict(true);
+    setConflictChoice(choice);
+    setConflictError(null);
+    setConflictProgress(choice === "local" ? "Preparing to keep this device's version..." : "Preparing to use Firebase's version...");
     try {
       if (choice === "local") {
-        await SyncSystem.keepLocalVersion();
+        await SyncSystem.keepLocalVersion(setConflictProgress);
         toast.success("Firebase was overwritten with this device's data.");
       } else {
-        const items = await SyncSystem.useFirebaseVersion();
+        const items = await SyncSystem.useFirebaseVersion(setConflictProgress);
         setShowWelcomeBackModal(true);
         toast.success(`Loaded ${items} items from Firebase.`);
       }
 
+      setConflictProgress("Finishing workspace setup...");
       await SeedSystem.seedIfEmpty();
       setInitializedFor(user.uid);
       setSyncConflict(null);
@@ -158,9 +165,13 @@ function AppContent() {
       window.dispatchEvent(new Event("delta-data-changed"));
     } catch (error) {
       console.error("App: Failed to resolve sync conflict", error);
-      toast.error(error instanceof Error ? error.message : "Failed to resolve sync conflict.");
+      const message = error instanceof Error ? error.message : "Failed to resolve sync conflict.";
+      setConflictError(message);
+      setConflictProgress("");
+      toast.error(message);
     } finally {
       setIsResolvingConflict(false);
+      setConflictChoice(null);
     }
   };
 
@@ -230,6 +241,22 @@ function AppContent() {
                   )}
                 </div>
               )}
+              {isResolvingConflict && (
+                <div className="flex items-center gap-3 rounded-md border border-primary/30 bg-primary/10 p-3 text-sm">
+                  <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {conflictChoice === "local" ? "Keeping this version" : "Using Firebase version"}
+                    </p>
+                    <p className="text-muted-foreground">{conflictProgress || "Working..."}</p>
+                  </div>
+                </div>
+              )}
+              {conflictError && !isResolvingConflict && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {conflictError}
+                </div>
+              )}
             </div>
             <DialogFooter className="gap-2 sm:gap-2">
               <Button
@@ -237,13 +264,27 @@ function AppContent() {
                 disabled={isResolvingConflict}
                 onClick={() => resolveSyncConflict("firebase")}
               >
-                Use Firebase version
+                {conflictChoice === "firebase" ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    Using Firebase...
+                  </>
+                ) : (
+                  "Use Firebase version"
+                )}
               </Button>
               <Button
                 disabled={isResolvingConflict}
                 onClick={() => resolveSyncConflict("local")}
               >
-                Keep this version
+                {conflictChoice === "local" ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    Keeping this...
+                  </>
+                ) : (
+                  "Keep this version"
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

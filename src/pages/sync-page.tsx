@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MIN_SYNC_INTERVAL_MS, SYNC_STATE_EVENT, SyncSystem, type SyncStatus } from "@/ecs/sync";
 import { toast } from "sonner";
-import { RefreshCw, Cloud, Wifi, WifiOff, CheckCircle2, AlertCircle, Clock3, ShieldCheck } from "lucide-react";
+import { RefreshCw, Cloud, CloudUpload, Wifi, WifiOff, CheckCircle2, AlertCircle, Clock3, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -39,7 +39,7 @@ function useSyncStatus() {
     window.addEventListener("offline", handleOffline);
     window.addEventListener(SYNC_STATE_EVENT, updateStatus);
 
-    const interval = setInterval(updateStatus, 1500);
+    const interval = setInterval(updateStatus, 1000);
     return () => {
       clearInterval(interval);
       window.removeEventListener("online", handleOnline);
@@ -78,16 +78,26 @@ export function SyncPage() {
   const handleSyncNow = async () => {
     setIsSyncing(true);
     try {
-      await SyncSystem.processQueue();
+      if (isDirty) {
+        await SyncSystem.processQueue();
+      }
+
       const queue = await SyncSystem.getQueueCount();
-      const verification = queue === 0 ? await SyncSystem.verifySync() : null;
-      if (queue === 0 && verification?.ok) {
+      if (queue > 0) {
+        toast.warning(`${queue} operation${queue === 1 ? "" : "s"} still queued for the next sync.`);
+        return;
+      }
+
+      const verification = await SyncSystem.verifySync();
+      if (verification.ok) {
         toast.success("Local data matches Firebase");
+      } else if (verification.mismatches.length > 0) {
+        toast.error(verification.mismatches[0]);
       } else {
-        toast.warning("Some items are still waiting to sync");
+        toast.error("Verification failed.");
       }
     } catch (error) {
-      toast.error("Sync failed. Check connection.");
+      toast.error(error instanceof Error ? error.message : "Sync failed. Check connection.");
     } finally {
       setIsSyncing(false);
     }
@@ -141,18 +151,26 @@ export function SyncPage() {
                 "p-3 rounded-full",
                 isDirty || !isVerified ? "bg-amber-500/20 text-amber-500" : "bg-green-500/20 text-green-500"
               )}>
-                {isDirty || !isVerified ? <AlertCircle className="h-6 w-6" /> : <CheckCircle2 className="h-6 w-6" />}
+                {isProcessing ? (
+                  <RefreshCw className="h-6 w-6 animate-spin" />
+                ) : isDirty ? (
+                  <CloudUpload className="h-6 w-6" />
+                ) : !isVerified ? (
+                  <AlertCircle className="h-6 w-6" />
+                ) : (
+                  <CheckCircle2 className="h-6 w-6" />
+                )}
               </div>
               <div>
                 <p className={cn(
                   "font-semibold text-lg",
                   isDirty || !isVerified ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400"
                 )}>
-                  {isDirty ? "Waiting for Background Sync" : isVerified ? "Verified Synced" : "Verification Needed"}
+                  {isProcessing ? "Syncing Now" : isDirty ? "To Sync" : isVerified ? "Verified Synced" : "Verification Needed"}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  {isDirty 
-                    ? `${queueCount} operation${queueCount > 1 ? 's' : ''} queued.`
+                  {isDirty
+                    ? `${queueCount} operation${queueCount > 1 ? 's' : ''} queued. Auto sync in ${formatRemaining(nextSyncAt)}.`
                     : lastVerifiedAt
                       ? `Last verified ${formatTime(lastVerifiedAt)}.`
                       : "No verification has completed yet."}
@@ -168,7 +186,7 @@ export function SyncPage() {
           <div className="space-y-2">
             <div className="flex justify-between text-xs font-medium px-1">
               <span>Sync Progress</span>
-              <span>{isProcessing ? "Syncing" : isDirty ? "Queued" : isVerified ? "Verified" : "Check needed"}</span>
+              <span>{isProcessing ? "Syncing" : isDirty ? `Auto sync in ${formatRemaining(nextSyncAt)}` : isVerified ? "Verified" : "Check needed"}</span>
             </div>
             <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
               <div 
@@ -211,7 +229,9 @@ export function SyncPage() {
                 Verification
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {lastVerificationError || (verificationMismatches.length > 0
+                {isDirty
+                  ? `To sync: ${queueCount} queued operation${queueCount === 1 ? "" : "s"}.`
+                  : lastVerificationError || (verificationMismatches.length > 0
                   ? verificationMismatches.slice(0, 2).join("; ")
                   : lastVerifiedAt
                     ? "Local records match Firebase."
@@ -227,7 +247,7 @@ export function SyncPage() {
             className="w-full gap-2 shadow-sm"
           >
             <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
-            {isSyncing ? "Syncing..." : isDirty ? "Sync Now" : "Verify Now"}
+            {isSyncing ? (isDirty ? "Syncing..." : "Verifying...") : isDirty ? "Sync Now" : "Verify Now"}
           </Button>
         </CardFooter>
       </Card>
@@ -246,4 +266,13 @@ function formatTime(timestamp: number) {
 function formatDuration(ms: number) {
   const minutes = ms / 60_000;
   return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(2)} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function formatRemaining(timestamp: number | null) {
+  if (!timestamp) return "soon";
+  const totalSeconds = Math.max(0, Math.ceil((timestamp - Date.now()) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }

@@ -19,17 +19,18 @@ import {
   DropdownMenuTrigger
 } from "./ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { AlertCircle, LogOut, User as UserIcon, Settings as SettingsIcon, Cloud, CloudOff, RefreshCw } from "lucide-react";
+import { AlertCircle, Cloud, CloudOff, CloudUpload, LogOut, Settings as SettingsIcon, RefreshCw } from "lucide-react";
 
 export function TopBar() {
   const { mode, setMode, sidebarOpen, setSidebarOpen } = useAppStore();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [syncState, setSyncState] = useState<{ queue: number, online: boolean, processing: boolean, verified: boolean }>({
+  const [syncState, setSyncState] = useState<{ queue: number, online: boolean, processing: boolean, verified: boolean, nextSyncAt: number | null }>({
     queue: 0,
     online: true,
     processing: false,
     verified: true,
+    nextSyncAt: null,
   });
   const navigate = useNavigate();
 
@@ -41,11 +42,12 @@ export function TopBar() {
         online: status.isOnline,
         processing: status.isProcessing,
         verified: status.lastVerifiedAt !== null && status.verificationMismatches.length === 0 && !status.lastVerificationError,
+        nextSyncAt: status.nextSyncAt,
       });
     };
     updateSync();
     window.addEventListener(SYNC_STATE_EVENT, updateSync);
-    const interval = setInterval(updateSync, 3000);
+    const interval = setInterval(updateSync, 1000);
     return () => {
       clearInterval(interval);
       window.removeEventListener(SYNC_STATE_EVENT, updateSync);
@@ -135,7 +137,11 @@ export function TopBar() {
                 {!syncState.online ? (
                   <CloudOff className="h-4 w-4 text-destructive" />
                 ) : syncState.processing || syncState.queue > 0 ? (
-                  <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
+                  syncState.processing ? (
+                    <RefreshCw className="h-4 w-4 text-amber-500 animate-spin" />
+                  ) : (
+                    <CloudUpload className="h-4 w-4 text-amber-500" />
+                  )
                 ) : !syncState.verified ? (
                   <AlertCircle className="h-4 w-4 text-amber-500" />
                 ) : (
@@ -150,7 +156,7 @@ export function TopBar() {
                   : syncState.processing
                     ? "Syncing in background..."
                     : syncState.queue > 0
-                      ? `${syncState.queue} item${syncState.queue === 1 ? "" : "s"} queued for background sync`
+                      ? `${syncState.queue} item${syncState.queue === 1 ? "" : "s"} to sync. Auto sync in ${formatRemaining(syncState.nextSyncAt)}`
                       : syncState.verified
                         ? "Cloud verified"
                         : "Cloud verification needs attention"}
@@ -194,4 +200,13 @@ export function TopBar() {
       </div>
     </header>
   );
+}
+
+function formatRemaining(timestamp: number | null) {
+  if (!timestamp) return "soon";
+  const totalSeconds = Math.max(0, Math.ceil((timestamp - Date.now()) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }
